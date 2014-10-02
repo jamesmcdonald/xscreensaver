@@ -14,7 +14,7 @@
 "*grabDesktopImages:	True",
 "*grabVideoFrames:	False",
 "*chooseRandomImages:	True",
-"*imageDirectory:	/Library/Desktop Pictures/",
+"*imageDirectory:	/usr/share/wallpapers/",
 "*nice:			10",
 "*memoryLimit:		0",
 "*lock:			False",
@@ -32,7 +32,7 @@
 "*authWarningSlack:	20",
 "*textMode:		file",
 "*textLiteral:		XScreenSaver",
-"*textFile:		",
+"*textFile:		/usr/share/doc/xserver-common/copyright",
 "*textProgram:		fortune",
 "*textURL:		http://en.wikipedia.org/w/index.php?title=Special:NewPages&feed=rss",
 "*overlayTextForeground:	#FFFF00",
@@ -51,12 +51,14 @@
 "*manualCommand: xterm -sb -fg black -bg gray75 -T '%s manual' \
 		    -e /bin/sh -c 'man \"%s\" ; read foo'",
 "*dateFormat:		%d-%b-%y (%a); %I:%M %p",
+"*newLoginCommand:	gdmflexiserver -ls",
 "*installColormap:	True",
 "*programs:								      \
 				maze -root				    \\n\
   GL: 				superquadrics -root			    \\n\
 				attraction -root			    \\n\
 				blitspin -root				    \\n\
+				colourclock -root			    \\n\
 				greynetic -root				    \\n\
 				helix -root				    \\n\
 				hopalong -root				    \\n\
@@ -317,6 +319,7 @@
 "*hacks.bubble3d.name:       Bubble3D",
 "*hacks.ccurve.name:         CCurve",
 "*hacks.cloudlife.name:      CloudLife",
+"*hacks.colourclock.name:    ColourClock",
 "*hacks.companioncube.name:  CompanionCube",
 "*hacks.cubestorm.name:      CubeStorm",
 "*hacks.cubicgrid.name:      CubicGrid",
