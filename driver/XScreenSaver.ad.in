@@ -160,6 +160,7 @@ GetViewPortIsFullOfLies: False
 @GL_KLUDGE@ GL: 				superquadrics -root			    \n\
 				attraction -root			    \n\
 				blitspin -root				    \n\
+				colourclock -root			    \n\
 				greynetic -root				    \n\
 				helix -root				    \n\
 				hopalong -root				    \n\
@@ -445,6 +446,7 @@ XScreenSaver.bourneShell:		/bin/sh
 *hacks.bubble3d.name:       Bubble3D
 *hacks.ccurve.name:         CCurve
 *hacks.cloudlife.name:      CloudLife
+*hacks.colourclock.name:    ColourClock
 *hacks.companioncube.name:  CompanionCube
 *hacks.cubestorm.name:      CubeStorm
 *hacks.cubicgrid.name:      CubicGrid

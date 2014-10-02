@@ -91,7 +91,7 @@ UTIL_OBJS	= $(UTILS_BIN)/alpha.o $(UTILS_BIN)/colors.o \
 		  $(UTILS_SRC)/thread_util.o
 
 SRCS		= attraction.c blitspin.c bouboule.c braid.c bubbles.c \
-		  bubbles-default.c decayscreen.c deco.c drift.c flag.c \
+		  bubbles-default.c colourclock.c decayscreen.c deco.c drift.c flag.c \
 		  flame.c forest.c vines.c galaxy.c grav.c greynetic.c \
 		  halo.c helix.c hopalong.c hypercube.c ifs.c imsmap.c \
 		  julia.c kaleidescope.c laser.c lightning.c lisa.c lmorph.c \
@@ -131,7 +131,7 @@ EXTERNALS	= cosmos electricsheep fireflies goban \
 		  xmountains xplanet xsnow
 
 OBJS		= attraction.o blitspin.o bouboule.o braid.o bubbles.o \
-		  bubbles-default.o decayscreen.o deco.o drift.o flag.o \
+		  bubbles-default.o colourclock.o decayscreen.o deco.o drift.o flag.o \
 		  flame.o forest.o vines.o galaxy.o grav.o greynetic.o \
 		  halo.o helix.o hopalong.o hypercube.o ifs.o imsmap.o \
 		  julia.o kaleidescope.o laser.o lightning.o lisa.o lmorph.o \
@@ -161,7 +161,7 @@ OBJS		= attraction.o blitspin.o bouboule.o braid.o bubbles.o \
 		  webcollage-helper-cocoa.o m6502.o asm6502.o abstractile.o \
 		  lcdscrub.o hexadrop.o tessellimage.o delaunay.o
 
-EXES		= attraction blitspin bouboule braid decayscreen deco \
+EXES		= attraction blitspin bouboule braid colourclock decayscreen deco \
 		  drift flame galaxy grav greynetic halo \
 		  helix hopalong ifs imsmap julia kaleidescope \
 		  maze moire noseguy pedal \
@@ -585,6 +585,9 @@ deco:		deco.o		$(HACK_OBJS) $(COL)
 
 flame:		flame.o		$(HACK_OBJS) $(COL)
 	$(CC_HACK) -o $@ $@.o	$(HACK_OBJS) $(COL) $(HACK_LIBS)
+
+colourclock:	colourclock.o	$(HACK_OBJS)
+	$(CC_HACK) -o $@ $@.o	$(HACK_OBJS) $(HACK_LIBS)
 
 greynetic:	greynetic.o	$(HACK_OBJS)
 	$(CC_HACK) -o $@ $@.o	$(HACK_OBJS) $(HACK_LIBS)
@@ -1688,6 +1691,17 @@ grav.o: $(UTILS_SRC)/xshm.h
 grav.o: $(UTILS_SRC)/yarandom.h
 grav.o: $(srcdir)/xlockmoreI.h
 grav.o: $(srcdir)/xlockmore.h
+colourclock.o: ../config.h
+colourclock.o: $(srcdir)/fps.h
+colourclock.o: $(srcdir)/screenhackI.h
+colourclock.o: $(srcdir)/screenhack.h
+colourclock.o: $(UTILS_SRC)/colors.h
+colourclock.o: $(UTILS_SRC)/grabscreen.h
+colourclock.o: $(UTILS_SRC)/hsv.h
+colourclock.o: $(UTILS_SRC)/resources.h
+colourclock.o: $(UTILS_SRC)/usleep.h
+colourclock.o: $(UTILS_SRC)/visual.h
+colourclock.o: $(UTILS_SRC)/yarandom.h
 greynetic.o: ../config.h
 greynetic.o: $(srcdir)/fps.h
 greynetic.o: $(srcdir)/screenhackI.h

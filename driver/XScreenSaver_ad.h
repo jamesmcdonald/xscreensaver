@@ -14,7 +14,7 @@
 "*grabDesktopImages:	True",
 "*grabVideoFrames:	False",
 "*chooseRandomImages:	True",
-"*imageDirectory:	/Library/Desktop Pictures/",
+"*imageDirectory:	/usr/share/wallpapers/",
 "*nice:			10",
 "*memoryLimit:		0",
 "*lock:			False",
@@ -31,7 +31,7 @@
 "*ignoreUninstalledPrograms: False",
 "*textMode:		file",
 "*textLiteral:		XScreenSaver",
-"*textFile:		",
+"*textFile:		/usr/share/doc/xserver-common/copyright",
 "*textProgram:		fortune",
 "*textURL:		http://en.wikipedia.org/w/index.php?title=Special:NewPages&feed=rss",
 "*overlayTextForeground:	#FFFF00",
@@ -50,12 +50,14 @@
 "*manualCommand: gnome-terminal --title '%s manual' \
 		--command '/bin/sh -c \"man %s; read foo\"'",
 "*dateFormat:		%d-%b-%y (%a); %I:%M %p",
+"*newLoginCommand:	gdmflexiserver -ls",
 "*installColormap:	True",
 "*programs:								      \
 				maze -root				    \\n\
   GL: 				superquadrics -root			    \\n\
 				attraction -root			    \\n\
 				blitspin -root				    \\n\
+				colourclock -root			    \\n\
 				greynetic -root				    \\n\
 				helix -root				    \\n\
 				hopalong -root				    \\n\
@@ -126,7 +128,7 @@
 				compass -root				    \\n\
 				deluxe -root				    \\n\
 -				demon -root				    \\n\
-- GL: 				extrusion -root				    \\n\
+  GL: 				extrusion -root				    \\n\
 -				loop -root				    \\n\
 				penetrate -root				    \\n\
 				petri -root				    \\n\
@@ -311,6 +313,7 @@
 "*hacks.bubble3d.name:       Bubble3D",
 "*hacks.ccurve.name:         CCurve",
 "*hacks.cloudlife.name:      CloudLife",
+"*hacks.colourclock.name:    ColourClock",
 "*hacks.companioncube.name:  CompanionCube",
 "*hacks.cubestorm.name:      CubeStorm",
 "*hacks.cubicgrid.name:      CubicGrid",
