@@ -1,4 +1,4 @@
-/* polyhedra, Copyright (c) 2004-2012 Jamie Zawinski <jwz@jwz.org>
+/* polyhedra, Copyright (c) 2004-2014 Jamie Zawinski <jwz@jwz.org>
  *
  * Permission to use, copy, modify, distribute, and sell this software and its
  * documentation for any purpose is hereby granted without fee, provided that
@@ -18,9 +18,9 @@
 #define DEFAULTS	"*delay:	30000         \n" \
 			"*showFPS:      False         \n" \
 			"*wireframe:    False         \n" \
-			"*titleFont:  -*-helvetica-medium-r-normal-*-140-*\n" \
-			"*titleFont2: -*-helvetica-medium-r-normal-*-100-*\n" \
-			"*titleFont3: -*-helvetica-medium-r-normal-*-80-*\n"  \
+	"*titleFont:  -*-helvetica-medium-r-normal-*-*-140-*-*-*-*-*-*\n" \
+	"*titleFont2: -*-helvetica-medium-r-normal-*-*-100-*-*-*-*-*-*\n" \
+	"*titleFont3: -*-helvetica-medium-r-normal-*-*-80-*-*-*-*-*-*\n"  \
 
 
 # define refresh_polyhedra 0
@@ -49,7 +49,7 @@
 #define DEF_DURATION    "12"
 #define DEF_WHICH       "random"
 
-#include "glxfonts.h"
+#include "texfont.h"
 #include "normals.h"
 #include "polyhedra.h"
 #include "colors.h"
@@ -81,7 +81,6 @@ typedef struct {
   int which;
   int change_to;
   GLuint object_list;
-  GLuint title_list;
 
   int mode;  /* 0 = normal, 1 = out, 2 = in */
   int mode_tick;
@@ -89,12 +88,7 @@ typedef struct {
   int ncolors;
   XColor *colors;
 
-# ifdef HAVE_GLBITMAP
-  XFontStruct *xfont1, *xfont2, *xfont3;
-  GLuint font1_dlist, font2_dlist, font3_dlist;
-# else
   texture_font_data *font1_data, *font2_data, *font3_data;
-# endif
 
   time_t last_change_time;
   int change_tick;
@@ -176,15 +170,9 @@ static void
 load_fonts (ModeInfo *mi)
 {
   polyhedra_configuration *bp = &bps[MI_SCREEN(mi)];
-# ifdef HAVE_GLBITMAP
-  load_font (mi->dpy, "titleFont",  &bp->xfont1, &bp->font1_dlist);
-  load_font (mi->dpy, "titleFont2", &bp->xfont2, &bp->font2_dlist);
-  load_font (mi->dpy, "titleFont3", &bp->xfont3, &bp->font3_dlist);
-# else /* !HAVE_GLBITMAP */
   bp->font1_data = load_texture_font (mi->dpy, "titleFont");
   bp->font2_data = load_texture_font (mi->dpy, "titleFont2");
   bp->font3_data = load_texture_font (mi->dpy, "titleFont3");
-# endif /* !HAVE_GLBITMAP */
 }
 
 
@@ -194,29 +182,12 @@ startup_blurb (ModeInfo *mi)
 {
   polyhedra_configuration *bp = &bps[MI_SCREEN(mi)];
   const char *s = "Computing polyhedra...";
-# ifdef HAVE_GLBITMAP
-  XFontStruct *f = bp->xfont1;
-# else /* !HAVE_GLBITMAP */
   texture_font_data *f = bp->font1_data;
-# endif /* !HAVE_GLBITMAP */
 
   glColor3f (0.8, 0.8, 0);
-  print_gl_string (mi->dpy, 
-# ifdef HAVE_GLBITMAP
-                   bp->xfont1, bp->font1_dlist,
-# else /* !HAVE_GLBITMAP */
-                   bp->font1_data,
-# endif /* !HAVE_GLBITMAP */
-                   mi->xgwa.width, mi->xgwa.height,
-                   mi->xgwa.width - (
-# ifdef HAVE_GLBITMAP
-                                     string_width (f, s, 0)
-# else /* !HAVE_GLBITMAP */
-                                     texture_string_width (f, s, 0)
-# endif /* !HAVE_GLBITMAP */
-                                     + 40),
-                   mi->xgwa.height - 10,
-                   s, False);
+  print_texture_label (mi->dpy, f,
+                       mi->xgwa.width, mi->xgwa.height,
+                       0, s);
   glFinish();
   glXSwapBuffers(MI_DISPLAY(mi), MI_WINDOW(mi));
 }
@@ -225,8 +196,6 @@ startup_blurb (ModeInfo *mi)
 
 /* Window management, etc
  */
-static void new_label (ModeInfo *mi);
-
 ENTRYPOINT void
 reshape_polyhedra (ModeInfo *mi, int width, int height)
 {
@@ -245,9 +214,6 @@ reshape_polyhedra (ModeInfo *mi, int width, int height)
              0.0, 1.0, 0.0);
 
   glClear(GL_COLOR_BUFFER_BIT);
-
-  /* need to re-render the text when the window size changes */
-  new_label (mi);
 }
 
 
@@ -256,31 +222,10 @@ polyhedra_handle_event (ModeInfo *mi, XEvent *event)
 {
   polyhedra_configuration *bp = &bps[MI_SCREEN(mi)];
 
-  if (event->xany.type == ButtonPress &&
-      event->xbutton.button == Button1)
-    {
-      bp->button_down_p = True;
-      gltrackball_start (bp->trackball,
-                         event->xbutton.x, event->xbutton.y,
-                         MI_WIDTH (mi), MI_HEIGHT (mi));
-      return True;
-    }
-  else if (event->xany.type == ButtonRelease &&
-           event->xbutton.button == Button1)
-    {
-      bp->button_down_p = False;
-      return True;
-    }
-  else if (event->xany.type == ButtonPress &&
-           (event->xbutton.button == Button4 ||
-            event->xbutton.button == Button5 ||
-            event->xbutton.button == Button6 ||
-            event->xbutton.button == Button7))
-    {
-      gltrackball_mousewheel (bp->trackball, event->xbutton.button, 10,
-                              !!event->xbutton.state);
-      return True;
-    }
+  if (gltrackball_event_handler (event, bp->trackball,
+                                 MI_WIDTH (mi), MI_HEIGHT (mi),
+                                 &bp->button_down_p))
+    return True;
   else if (event->xany.type == KeyPress)
     {
       KeySym keysym;
@@ -291,22 +236,22 @@ polyhedra_handle_event (ModeInfo *mi, XEvent *event)
       if (c == ' ' || c == '\t' || c == '\r' || c == '\n')
         bp->change_to = random() % bp->npolyhedra;
       else if (c == '>' || c == '.' || c == '+' || c == '=' ||
-               keysym == XK_Right || keysym == XK_Up)
+               keysym == XK_Right || keysym == XK_Up || keysym == XK_Next)
         bp->change_to = (bp->which + 1) % bp->npolyhedra;
       else if (c == '<' || c == ',' || c == '-' || c == '_' ||
                c == '\010' || c == '\177' ||
-               keysym == XK_Left || keysym == XK_Down)
+               keysym == XK_Left || keysym == XK_Down || keysym == XK_Prior)
         bp->change_to = (bp->which + bp->npolyhedra - 1) % bp->npolyhedra;
+      else if (screenhack_event_helper (MI_DISPLAY(mi), MI_WINDOW(mi), event))
+        goto DEF;
 
       if (bp->change_to != -1)
         return True;
     }
-  else if (event->xany.type == MotionNotify &&
-           bp->button_down_p)
+  else if (screenhack_event_helper (MI_DISPLAY(mi), MI_WINDOW(mi), event))
     {
-      gltrackball_track (bp->trackball,
-                         event->xmotion.x, event->xmotion.y,
-                         MI_WIDTH (mi), MI_HEIGHT (mi));
+    DEF:
+      bp->change_to = random() % bp->npolyhedra;
       return True;
     }
 
@@ -315,74 +260,50 @@ polyhedra_handle_event (ModeInfo *mi, XEvent *event)
 
 
 static void
-new_label (ModeInfo *mi)
+draw_label (ModeInfo *mi)
 {
   polyhedra_configuration *bp = &bps[MI_SCREEN(mi)];
   polyhedron *p = bp->which >= 0 ? bp->polyhedra[bp->which] : 0;
+  char label[1024];
+  char name2[255];
+  GLfloat color[4] = { 0.8, 0.8, 0.8, 1 };
+  texture_font_data *f;
 
-  glNewList (bp->title_list, GL_COMPILE);
-  if (p && do_titles)
-    {
-      char label[1024];
-      char name2[255];
-      strcpy (name2, p->name);
-      if (*p->class)
-        sprintf (name2 + strlen(name2), "  (%s)", p->class);
+  if (!p || !do_titles) return;
 
-      sprintf (label,
-               "Polyhedron %d:   \t%s\n\n"
-               "Wythoff Symbol:\t%s\n"
-               "Vertex Configuration:\t%s\n"
-               "Symmetry Group:\t%s\n"
-            /* "Dual of:              \t%s\n" */
-               "\n"
-               "Faces:\t  %d\n"
-               "Edges:\t  %d\n"
-               "Vertices:\t  %d\n"
-               "Density:\t  %d\n"
-               "Euler:\t%s%d\n",
-               bp->which, name2, p->wythoff, p->config, p->group,
-            /* p->dual, */
-               p->logical_faces, p->nedges, p->logical_vertices,
-               p->density, (p->chi < 0 ? "" : "  "), p->chi);
+  strcpy (name2, p->name);
+  if (*p->class)
+    sprintf (name2 + strlen(name2), "  (%s)", p->class);
 
-      {
-# ifdef HAVE_GLBITMAP
-        XFontStruct *f;
-        GLuint fl;
-# else /* !HAVE_GLBITMAP */
-        texture_font_data *f;
-# endif /* !HAVE_GLBITMAP */
-        if (MI_WIDTH(mi) >= 500 && MI_HEIGHT(mi) >= 375)
-# ifdef HAVE_GLBITMAP
-          f = bp->xfont1, fl = bp->font1_dlist;		       /* big font */
-# else /* !HAVE_GLBITMAP */
-          f = bp->font1_data;
-# endif /* !HAVE_GLBITMAP */
-        else if (MI_WIDTH(mi) >= 350 && MI_HEIGHT(mi) >= 260)
-# ifdef HAVE_GLBITMAP
-          f = bp->xfont2, fl = bp->font2_dlist;		       /* small font */
-# else /* !HAVE_GLBITMAP */
-          f = bp->font2_data;				       /* small font */
-# endif /* !HAVE_GLBITMAP */
-        else
-# ifdef HAVE_GLBITMAP
-          f = bp->xfont3, fl = bp->font3_dlist;		       /* tiny font */
-# else /* !HAVE_GLBITMAP */
-          f = bp->font3_data;				       /* tiny font */
-# endif /* !HAVE_GLBITMAP */
+  sprintf (label,
+           "Polyhedron %d:   \t%s\n\n"
+           "Wythoff Symbol:\t%s\n"
+           "Vertex Configuration:\t%s\n"
+           "Symmetry Group:\t%s\n"
+        /* "Dual of:              \t%s\n" */
+           "\n"
+           "Faces:\t  %d\n"
+           "Edges:\t  %d\n"
+           "Vertices:\t  %d\n"
+           "Density:\t  %d\n"
+           "Euler:\t%s%d\n",
+           bp->which, name2, p->wythoff, p->config, p->group,
+        /* p->dual, */
+           p->logical_faces, p->nedges, p->logical_vertices,
+           p->density, (p->chi < 0 ? "" : "  "), p->chi);
 
-        glColor3f (0.8, 0.8, 0);
-        print_gl_string (mi->dpy, f,
-# ifdef HAVE_GLBITMAP
-                         fl,
-# endif /* HAVE_GLBITMAP */
-                         mi->xgwa.width, mi->xgwa.height,
-                         10, mi->xgwa.height - 10,
-                         label, False);
-      }
-    }
-  glEndList ();
+  if (MI_WIDTH(mi) >= 500 && MI_HEIGHT(mi) >= 375)
+    f = bp->font1_data;
+  else if (MI_WIDTH(mi) >= 350 && MI_HEIGHT(mi) >= 260)
+    f = bp->font2_data;				       /* small font */
+  else
+    f = bp->font3_data;				       /* tiny font */
+
+  glColor4fv (color);
+  glMaterialfv (GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, color);
+  print_texture_label (mi->dpy, f,
+                       mi->xgwa.width, mi->xgwa.height,
+                       1, label);
 }
 
 
@@ -432,8 +353,6 @@ new_polyhedron (ModeInfo *mi)
                (random() % bp->npolyhedra));
   bp->change_to = -1;
   p = bp->polyhedra[bp->which];
-
-  new_label (mi);
 
   if (wire)
     glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
@@ -593,14 +512,13 @@ init_polyhedra (ModeInfo *mi)
                             spin_accel,
                             do_wander ? wander_speed : 0,
                             True);
-    bp->trackball = gltrackball_init ();
+    bp->trackball = gltrackball_init (True);
   }
 
   bp->npolyhedra = construct_polyhedra (&bp->polyhedra);
   construct_teapot (mi);
 
   bp->object_list = glGenLists (1);
-  bp->title_list  = glGenLists (1);
   bp->change_to = -1;
 
   {
@@ -678,7 +596,7 @@ draw_polyhedra (ModeInfo *mi)
           if (!bp->button_down_p && now - bp->last_change_time >= duration)
             {
               bp->mode = 1;    /* go out */
-              bp->mode_tick = 20 * speed;
+              bp->mode_tick = 20 / speed;
               bp->last_change_time = now;
             }
         }
@@ -688,7 +606,7 @@ draw_polyhedra (ModeInfo *mi)
       if (--bp->mode_tick <= 0)
         {
           new_polyhedron (mi);
-          bp->mode_tick = 20 * speed;
+          bp->mode_tick = 20 / speed;
           bp->mode = 2;  /* go in */
         }
     }
@@ -716,10 +634,7 @@ draw_polyhedra (ModeInfo *mi)
                  (y - 0.5) * 8,
                  (z - 0.5) * 15);
 
-    /* Do it twice because we don't track the device's orientation. */
-    glRotatef( current_device_rotation(), 0, 0, 1);
     gltrackball_rotate (bp->trackball);
-    glRotatef(-current_device_rotation(), 0, 0, 1);
 
     get_rotation (bp->rot, &x, &y, &z, !bp->button_down_p);
     glRotatef (x * 360, 1.0, 0.0, 0.0);
@@ -735,15 +650,15 @@ draw_polyhedra (ModeInfo *mi)
   if (bp->mode != 0)
     {
       GLfloat s = (bp->mode == 1
-                   ? bp->mode_tick / (20 * speed)
-                   : ((20 * speed) - bp->mode_tick + 1) / (20 * speed));
+                   ? bp->mode_tick / (20 / speed)
+                   : ((20 / speed) - bp->mode_tick + 1) / (20 / speed));
       glScalef (s, s, s);
     }
 
   glScalef (2, 2, 2);
   glCallList (bp->object_list);
   if (bp->mode == 0 && !bp->button_down_p)
-    glCallList (bp->title_list);
+    draw_label (mi);    /* print_texture_font can't go inside a display list */
 
   glPopMatrix ();
 

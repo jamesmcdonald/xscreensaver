@@ -4,6 +4,8 @@
 
   <command arg="-root"/>
 
+  <video href="http://www.youtube.com/watch?v=WPhqyM9Bb4o"/>
+
   <hgroup>
    <vgroup>
     <number id="delay" type="slider" arg="-delay %"
@@ -41,8 +43,8 @@
   <xscreensaver-updater />
 
   <_description>
-Draws a set of interacting, square-spiral-producing automata.  The
-spirals grow outward until they hit something, then they go around it.
+Square-spiral-producing automata.  The spirals grow outward until they
+hit something, then they go around it.
 
 Written by Jeff Epler; 1999.
   </_description>

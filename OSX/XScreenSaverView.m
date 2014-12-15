@@ -47,6 +47,8 @@ int mono_p = 0;
 
 # ifdef USE_IPHONE
 
+#  define NSSizeToCGSize(x) (x)
+
 extern NSDictionary *make_function_table_dict(void);  // ios-function-table.m
 
 /* Stub definition of the superclass, for iPhone.
@@ -139,8 +141,7 @@ extern NSDictionary *make_function_table_dict(void);  // ios-function-table.m
     NSLog (@"no symbol \"%@\" for \"%@\"", table_name, path);
 
 # else  // USE_IPHONE
-  // Remember: any time you add a new saver to the iOS app,
-  // manually run "make ios-function-table.m"!
+  // Depends on the auto-generated "ios-function-table.m" being up to date.
   if (! function_tables)
     function_tables = [make_function_table_dict() retain];
   NSValue *v = [function_tables objectForKey: name];
@@ -268,6 +269,7 @@ add_default_options (const XrmOptionDescRec *opts,
 # endif
     ".imageDirectory:     ~/Pictures",
     ".relaunchDelay:      2",
+    ".texFontCacheSize:   30",
 
 # ifndef USE_IPHONE
 #  define STR1(S) #S
@@ -354,19 +356,28 @@ double_time (void)
 }
 #endif // USE_IPHONE
 
+#if TARGET_IPHONE_SIMULATOR
+static const char *
+orientname(unsigned long o)
+{
+  switch (o) {
+  case UIDeviceOrientationUnknown:		return "Unknown";
+  case UIDeviceOrientationPortrait:		return "Portrait";
+  case UIDeviceOrientationPortraitUpsideDown:	return "PortraitUpsideDown";
+  case UIDeviceOrientationLandscapeLeft:	return "LandscapeLeft";
+  case UIDeviceOrientationLandscapeRight:	return "LandscapeRight";
+  case UIDeviceOrientationFaceUp:		return "FaceUp";
+  case UIDeviceOrientationFaceDown:		return "FaceDown";
+  default:					return "ERROR";
+  }
+}
+#endif // TARGET_IPHONE_SIMULATOR
+
 
 - (id) initWithFrame:(NSRect)frame
            saverName:(NSString *)saverName
            isPreview:(BOOL)isPreview
 {
-# ifdef USE_IPHONE
-  initial_bounds = frame.size;
-  rot_current_size = frame.size;	// needs to be early, because
-  rot_from = rot_current_size;		// [self setFrame] is called by
-  rot_to = rot_current_size;		// [super initWithFrame].
-  rotation_ratio = -1;
-# endif
-
   if (! (self = [super initWithFrame:frame isPreview:isPreview]))
     return 0;
   
@@ -377,12 +388,6 @@ double_time (void)
   }
 
   [self setShellPath];
-
-# ifdef USE_IPHONE
-  [self setMultipleTouchEnabled:YES];
-  orientation = UIDeviceOrientationUnknown;
-  [self didRotate:nil];
-# endif // USE_IPHONE
 
   setup_p = YES;
   if (xsft->setup_cb)
@@ -410,16 +415,33 @@ double_time (void)
   progname = progclass = xsft->progclass;
 
   next_frame_time = 0;
-  
-# ifdef USE_BACKBUFFER
-  [self createBackbuffer];
-  [self initLayer];
-# endif
 
 # ifdef USE_IPHONE
+  double s = [self hackedContentScaleFactor];
+# else
+  double s = 1;
+# endif
+
+  CGSize bb_size;	// pixels, not points
+  bb_size.width  = s * frame.size.width;
+  bb_size.height = s * frame.size.height;
+
+# ifdef USE_IPHONE
+  initial_bounds = rot_current_size = rot_from = rot_to = bb_size;
+  rotation_ratio = -1;
+
+  orientation = UIDeviceOrientationUnknown;
+  [self didRotate:nil];
+  [self initGestures];
+
   // So we can tell when we're docked.
   [UIDevice currentDevice].batteryMonitoringEnabled = YES;
 # endif // USE_IPHONE
+
+# ifdef USE_BACKBUFFER
+  [self createBackbuffer:bb_size];
+  [self initLayer];
+# endif
 
   return self;
 }
@@ -632,10 +654,16 @@ screenhack_do_fps (Display *dpy, Window w, fps_state *fpst, void *closure)
  */
 - (CGFloat) hackedContentScaleFactor
 {
-  GLfloat s = [self contentScaleFactor];
-  if (initial_bounds.width  >= 1024 ||
-      initial_bounds.height >= 1024)
+  NSSize ssize = [[[UIScreen mainScreen] currentMode] size];
+  NSSize bsize = [self bounds].size;
+
+  // Ratio of screen size in pixels to view size in points.
+  GLfloat s = ((ssize.width > ssize.height ? ssize.width : ssize.height) /
+               (bsize.width > bsize.height ? bsize.width : bsize.height));
+
+  if (ssize.width >= 1024 && ssize.height >= 1024)
     s = 1;
+
   return s;
 }
 
@@ -674,11 +702,17 @@ double current_device_rotation (void)
     double duration = 1/6.0;
     rotation_ratio = 1 - ((rot_start_time + duration - now) / duration);
 
-    if (rotation_ratio > 1) {	// Done animating.
+    if (rotation_ratio > 1 || ignore_rotation_p) {	// Done animating.
       orientation = new_orientation;
       rot_current_angle = angle_to;
       rot_current_size = rot_to;
       rotation_ratio = -1;
+
+# if TARGET_IPHONE_SIMULATOR
+      NSLog (@"rotation ended: %s %d, %d x %d",
+             orientname(orientation), (int) rot_current_angle,
+             (int) rot_current_size.width, (int) rot_current_size.height);
+# endif
 
       // Check orientation again in case we rotated again while rotating:
       // this is a no-op if nothing has changed.
@@ -694,11 +728,11 @@ double current_device_rotation (void)
 
 #   undef CLAMP180
 
-  double s = [self hackedContentScaleFactor];
-  if (!ignore_rotation_p &&
-      /* rotation_ratio && */
-      ((int) backbuffer_size.width  != (int) (s * rot_current_size.width) ||
-       (int) backbuffer_size.height != (int) (s * rot_current_size.height)))
+  CGSize rotsize = ((ignore_rotation_p || ![self reshapeRotatedWindow])
+                    ? initial_bounds
+                    : rot_current_size);
+  if ((int) backbuffer_size.width  != (int) rotsize.width ||
+      (int) backbuffer_size.height != (int) rotsize.height)
     [self resize_x11];
 }
 
@@ -736,19 +770,11 @@ double current_device_rotation (void)
 
 /* Create a bitmap context into which we render everything.
    If the desired size has changed, re-created it.
+   new_size is in rotated pixels, not points: the same size
+   and shape as the X11 window as seen by the hacks.
  */
-- (void) createBackbuffer
+- (void) createBackbuffer:(CGSize)new_size
 {
-# ifdef USE_IPHONE
-  double s = [self hackedContentScaleFactor];
-  CGSize rotsize = ignore_rotation_p ? initial_bounds : rot_current_size;
-  int new_w = s * rotsize.width;
-  int new_h = s * rotsize.height;
-# else
-  int new_w = [self bounds].size.width;
-  int new_h = [self bounds].size.height;
-# endif
-	
   // Colorspaces and CGContexts only happen with non-GL hacks.
   if (colorspace)
     CGColorSpaceRelease (colorspace);
@@ -818,21 +844,25 @@ double current_device_rotation (void)
   }
 
   if (backbuffer &&
-      backbuffer_size.width  == new_w &&
-      backbuffer_size.height == new_h)
+      (int)backbuffer_size.width  == (int)new_size.width &&
+      (int)backbuffer_size.height == (int)new_size.height)
     return;
 
-  CGSize osize = backbuffer_size;
   CGContextRef ob = backbuffer;
 
-  backbuffer_size.width  = new_w;
-  backbuffer_size.height = new_h;
+  CGSize osize = backbuffer_size;	// pixels, not points.
+  backbuffer_size = new_size;		// pixels, not points.
+
+# if TARGET_IPHONE_SIMULATOR
+  NSLog(@"backbuffer %.0fx%.0f",
+        backbuffer_size.width, backbuffer_size.height);
+# endif
 
   backbuffer = CGBitmapContextCreate (NULL,
-                                      backbuffer_size.width,
-                                      backbuffer_size.height,
+                                      (int)backbuffer_size.width,
+                                      (int)backbuffer_size.height,
                                       8, 
-                                      backbuffer_size.width * 4,
+                                      (int)backbuffer_size.width * 4,
                                       colorspace,
                                       // kCGImageAlphaPremultipliedLast
                                       (kCGImageAlphaNoneSkipFirst |
@@ -849,10 +879,12 @@ double current_device_rotation (void)
 
   if (ob) {
     // Restore old bits, as much as possible, to the X11 upper left origin.
-    CGRect rect;
+
+    CGRect rect;   // pixels, not points
     rect.origin.x = 0;
     rect.origin.y = (backbuffer_size.height - osize.height);
-    rect.size  = osize;
+    rect.size = osize;
+
     CGImageRef img = CGBitmapContextCreateImage (ob);
     CGContextDrawImage (backbuffer, rect, img);
     CGImageRelease (img);
@@ -869,20 +901,31 @@ double current_device_rotation (void)
 {
   if (!xwindow) return;  // early
 
+  CGSize new_size;	// pixels, not points
+
 # ifdef USE_BACKBUFFER
-  [self createBackbuffer];
-  jwxyz_window_resized (xdpy, xwindow,
-                        0, 0,
-                        backbuffer_size.width, backbuffer_size.height,
+#  ifdef USE_IPHONE
+  CGSize rotsize = ((ignore_rotation_p || ![self reshapeRotatedWindow])
+                    ? initial_bounds
+                    : rot_current_size);
+  new_size.width  = rotsize.width;
+  new_size.height = rotsize.height;
+#  else  // !USE_IPHONE
+  new_size = NSSizeToCGSize([self bounds].size);
+#  endif // !USE_IPHONE
+
+  [self createBackbuffer:new_size];
+  jwxyz_window_resized (xdpy, xwindow, 0, 0, new_size.width, new_size.height,
                         backbuffer);
 # else   // !USE_BACKBUFFER
-  NSRect r = [self frame];		// ignoring rotation is closer
-  r.size = [self bounds].size;		// to what XGetGeometry expects.
-  jwxyz_window_resized (xdpy, xwindow,
-                        r.origin.x, r.origin.y,
-                        r.size.width, r.size.height,
+  new_size = [self bounds].size;
+  jwxyz_window_resized (xdpy, xwindow, 0, 0, new_size.width, new_size.height,
                         0);
 # endif  // !USE_BACKBUFFER
+
+# if TARGET_IPHONE_SIMULATOR
+  NSLog(@"reshape %.0fx%.0f", new_size.width, new_size.height);
+# endif
 
   // Next time render_x11 is called, run the saver's reshape_cb.
   resized_p = YES;
@@ -967,6 +1010,7 @@ double current_device_rotation (void)
       fpst = fps_init (xdpy, xwindow);
       if (! xsft->fps_cb) xsft->fps_cb = screenhack_do_fps;
     } else {
+      fpst = NULL;
       xsft->fps_cb = 0;
     }
 
@@ -1162,24 +1206,31 @@ double current_device_rotation (void)
 # endif
 
 # ifdef USE_IPHONE
-  // Then compute the transformations for rotation.
-  double hs = [self hackedContentScaleFactor];
-  double s = [self contentScaleFactor];
-
   // The rotation origin for layer.affineTransform is in the center already.
   CGAffineTransform t = ignore_rotation_p ?
     CGAffineTransformIdentity :
     CGAffineTransformMakeRotation (rot_current_angle / (180.0 / M_PI));
 
-  CGFloat f = s / hs;
-  self.layer.affineTransform = CGAffineTransformScale(t, f, f);
+  // Ratio of backbuffer size in pixels to layer size in points.
+  CGSize ssize = backbuffer_size;
+  CGSize bsize = [self bounds].size;
+  GLfloat s = ((ssize.width > ssize.height ? ssize.width : ssize.height) /
+               (bsize.width > bsize.height ? bsize.width : bsize.height));
 
+  self.layer.contentsScale = s;
+  self.layer.affineTransform = t;
+
+  /* Setting the layer's bounds also sets the view's bounds.
+     The view's bounds must be in points, not pixels, and it
+     must be rotated to the current orientation.
+   */
   CGRect bounds;
   bounds.origin.x = 0;
   bounds.origin.y = 0;
-  bounds.size.width = backbuffer_size.width / s;
-  bounds.size.height = backbuffer_size.height / s;
+  bounds.size.width  = ssize.width  / s;
+  bounds.size.height = ssize.height / s;
   self.layer.bounds = bounds;
+
 # endif // USE_IPHONE
  
 # if defined(BACKBUFFER_CALAYER)
@@ -1395,19 +1446,55 @@ double current_device_rotation (void)
 }
 
 
+- (void) beep
+{
+# ifndef USE_IPHONE
+  NSBeep();
+# else // USE_IPHONE 
+
+  // There's no way to play a standard system alert sound!
+  // We'd have to include our own WAV for that.
+  //
+  // Or we could vibrate:
+  // #import <AudioToolbox/AudioToolbox.h>
+  // AudioServicesPlaySystemSound (kSystemSoundID_Vibrate);
+  //
+  // Instead, just flash the screen white, then fade.
+  //
+  UIView *v = [[UIView alloc] initWithFrame: [self frame]]; 
+  [v setBackgroundColor: [UIColor whiteColor]];
+  [[self window] addSubview:v];
+  [UIView animateWithDuration: 0.1
+          animations:^{ [v setAlpha: 0.0]; }
+          completion:^(BOOL finished) { [v removeFromSuperview]; } ];
+
+# endif  // USE_IPHONE
+}
+
+
+/* Send an XEvent to the hack.  Returns YES if it was handled.
+ */
+- (BOOL) sendEvent: (XEvent *) e
+{
+  if (!initted_p || ![self isAnimating]) // no event handling unless running.
+    return NO;
+
+  [self lockFocus];
+  [self prepareContext];
+  BOOL result = xsft->event_cb (xdpy, xwindow, xdata, e);
+  [self unlockFocus];
+  return result;
+}
+
+
 #ifndef USE_IPHONE
 
 /* Convert an NSEvent into an XEvent, and pass it along.
    Returns YES if it was handled.
  */
-- (BOOL) doEvent: (NSEvent *) e
+- (BOOL) convertEvent: (NSEvent *) e
             type: (int) type
 {
-  if (![self isPreview] ||     // no event handling if actually screen-saving!
-      ![self isAnimating] ||
-      !initted_p)
-    return NO;
-
   XEvent xe;
   memset (&xe, 0, sizeof(xe));
   
@@ -1505,77 +1592,73 @@ double current_device_rotation (void)
       break;
   }
 
-  [self lockFocus];
-  [self prepareContext];
-  BOOL result = xsft->event_cb (xdpy, xwindow, xdata, &xe);
-  [self unlockFocus];
-  return result;
+  return [self sendEvent: &xe];
 }
 
 
 - (void) mouseDown: (NSEvent *) e
 {
-  if (! [self doEvent:e type:ButtonPress])
+  if (! [self convertEvent:e type:ButtonPress])
     [super mouseDown:e];
 }
 
 - (void) mouseUp: (NSEvent *) e
 {
-  if (! [self doEvent:e type:ButtonRelease])
+  if (! [self convertEvent:e type:ButtonRelease])
     [super mouseUp:e];
 }
 
 - (void) otherMouseDown: (NSEvent *) e
 {
-  if (! [self doEvent:e type:ButtonPress])
+  if (! [self convertEvent:e type:ButtonPress])
     [super otherMouseDown:e];
 }
 
 - (void) otherMouseUp: (NSEvent *) e
 {
-  if (! [self doEvent:e type:ButtonRelease])
+  if (! [self convertEvent:e type:ButtonRelease])
     [super otherMouseUp:e];
 }
 
 - (void) mouseMoved: (NSEvent *) e
 {
-  if (! [self doEvent:e type:MotionNotify])
+  if (! [self convertEvent:e type:MotionNotify])
     [super mouseMoved:e];
 }
 
 - (void) mouseDragged: (NSEvent *) e
 {
-  if (! [self doEvent:e type:MotionNotify])
+  if (! [self convertEvent:e type:MotionNotify])
     [super mouseDragged:e];
 }
 
 - (void) otherMouseDragged: (NSEvent *) e
 {
-  if (! [self doEvent:e type:MotionNotify])
+  if (! [self convertEvent:e type:MotionNotify])
     [super otherMouseDragged:e];
 }
 
 - (void) scrollWheel: (NSEvent *) e
 {
-  if (! [self doEvent:e type:ButtonPress])
+  if (! [self convertEvent:e type:ButtonPress])
     [super scrollWheel:e];
 }
 
 - (void) keyDown: (NSEvent *) e
 {
-  if (! [self doEvent:e type:KeyPress])
+  if (! [self convertEvent:e type:KeyPress])
     [super keyDown:e];
 }
 
 - (void) keyUp: (NSEvent *) e
 {
-  if (! [self doEvent:e type:KeyRelease])
+  if (! [self convertEvent:e type:KeyRelease])
     [super keyUp:e];
 }
 
 - (void) flagsChanged: (NSEvent *) e
 {
-  if (! [self doEvent:e type:KeyPress])
+  if (! [self convertEvent:e type:KeyPress])
     [super flagsChanged:e];
 }
 
@@ -1592,50 +1675,96 @@ double current_device_rotation (void)
      suppose that this abstraction-breakage means that I'm adding
      XScreenSaverView to the UINavigationController wrong...
    */
-  UIViewController *v = [[self window] rootViewController];
-  if ([v isKindOfClass: [UINavigationController class]]) {
-    UINavigationController *n = (UINavigationController *) v;
-    [[n topViewController] becomeFirstResponder];
+//  UIViewController *v = [[self window] rootViewController];
+//  if ([v isKindOfClass: [UINavigationController class]]) {
+//    UINavigationController *n = (UINavigationController *) v;
+//    [[n topViewController] becomeFirstResponder];
+//  }
+  [self resignFirstResponder];
+
+  // Find SaverRunner.window (as opposed to SaverRunner.saverWindow)
+  UIWindow *listWindow = 0;
+  for (UIWindow *w in [[UIApplication sharedApplication] windows]) {
+    if (w != [self window]) {
+      listWindow = w;
+      break;
+    }
   }
 
   UIView *fader = [self superview];  // the "backgroundView" view is our parent
 
   if (relaunch_p) {   // Fake a shake on the SaverListController.
-    // Why is [self window] sometimes null here?
-    UIWindow *w = [[UIApplication sharedApplication] keyWindow];
-    UIViewController *v = [w rootViewController];
+    UIViewController *v = [listWindow rootViewController];
     if ([v isKindOfClass: [UINavigationController class]]) {
+# if TARGET_IPHONE_SIMULATOR
+      NSLog (@"simulating shake on saver list");
+# endif
       UINavigationController *n = (UINavigationController *) v;
       [[n topViewController] motionEnded: UIEventSubtypeMotionShake
                                withEvent: nil];
     }
   } else {	// Not launching another, animate our return to the list.
+# if TARGET_IPHONE_SIMULATOR
+    NSLog (@"fading back to saver list");
+# endif
+    UIWindow *saverWindow = [self window]; // not SaverRunner.window
+    [listWindow setHidden:NO];
     [UIView animateWithDuration: 0.5
             animations:^{ fader.alpha = 0.0; }
             completion:^(BOOL finished) {
                [fader removeFromSuperview];
                fader.alpha = 1.0;
+               [saverWindow setHidden:YES];
+               [listWindow makeKeyAndVisible];
+               [[[listWindow rootViewController] view] becomeFirstResponder];
             }];
   }
 }
 
 
+/* Whether the shape of the X11 Window should be changed to HxW when the
+   device is in a landscape orientation.  X11 hacks want this, but OpenGL
+   hacks do not.
+ */
+- (BOOL)reshapeRotatedWindow
+{
+  return YES;
+}
+
+
 /* Called after the device's orientation has changed.
+   
+   Rotation is complicated: the UI, X11 and OpenGL work in 3 different ways.
 
-   Note: we could include a subclass of UIViewController which
-   contains a shouldAutorotateToInterfaceOrientation method that
-   returns YES, in which case Core Animation would auto-rotate our
-   View for us in response to rotation events... but, that interacts
-   badly with the EAGLContext -- if you introduce Core Animation into
-   the path, the OpenGL pipeline probably falls back on software
-   rendering and performance goes to hell.  Also, the scaling and
-   rotation that Core Animation does interacts incorrectly with the GL
-   context anyway.
+   The UI (list of savers, preferences panels) is rotated by the system,
+   because its UIWindow is under a UINavigationController that does
+   automatic rotation, using Core Animation.
 
-   So, we have to hack the rotation animation manually, in the GL world.
+   The savers are under a different UIWindow and a UINavigationController
+   that does not do automatic rotation.
 
-   Possibly XScreenSaverView should use Core Animation, and 
-   XScreenSaverGLView should override that.
+   We have to do it this way for OpenGL savers because using Core Animation
+   on an EAGLContext causes the OpenGL pipeline to fall back on software
+   rendering and performance goes to hell.
+
+   For X11-only savers, we could just use Core Animation and let the system
+   handle it, but (maybe) it's simpler to do it the same way for X11 and GL.
+
+   During and after rotation, the size/shape of the X11 window changes,
+   and ConfigureNotify events are generated.
+
+   X11 code (jwxyz) continues to draw into the (reshaped) backbuffer, which
+   rotated at the last minute via a CGAffineTransformMakeRotation when it is
+   copied to the display hardware.
+
+   GL code always recieves a portrait-oriented X11 Window whose size never
+   changes.  The GL COLOR_BUFFER is displayed on the hardware directly and
+   unrotated, so the GL hacks themselves are responsible for rotating the
+   GL scene to match current_device_rotation().
+
+   Touch events are converted to mouse clicks, and those XEvent coordinates
+   are reported in the coordinate system currently in use by the X11 window.
+   Again, GL must convert those.
  */
 - (void)didRotate:(NSNotification *)notification
 {
@@ -1654,7 +1783,9 @@ double current_device_rotation (void)
     case UIInterfaceOrientationPortraitUpsideDown:
       current = UIDeviceOrientationPortraitUpsideDown;
       break;
-    case UIInterfaceOrientationLandscapeLeft:		// It's opposite day
+    /* It's opposite day, "because rotating the device to the left requires
+       rotating the content to the right" */
+    case UIInterfaceOrientationLandscapeLeft:
       current = UIDeviceOrientationLandscapeRight;
       break;
     case UIInterfaceOrientationLandscapeRight:
@@ -1724,6 +1855,13 @@ double current_device_rotation (void)
     break;
   }
 
+# if TARGET_IPHONE_SIMULATOR
+  NSLog (@"rotation begun: %s %d -> %s %d; %d x %d",
+         orientname(orientation), (int) rot_current_angle,
+         orientname(new_orientation), (int) angle_to,
+         (int) rot_current_size.width, (int) rot_current_size.height);
+# endif
+
  if (! initted_p) {
    // If we've done a rotation but the saver hasn't been initialized yet,
    // don't bother going through an X11 resize, but just do it now.
@@ -1733,178 +1871,222 @@ double current_device_rotation (void)
 }
 
 
-/* I believe we can't use UIGestureRecognizer for tracking touches
-   because UIPanGestureRecognizer doesn't give us enough detail in its
-   callbacks.
-
-   Currently we don't handle multi-touches (just the first touch) but
-   I'm leaving this comment here for future reference:
-
-   In the simulator, multi-touch sequences look like this:
-
-     touchesBegan [touchA, touchB]
-     touchesEnd [touchA, touchB]
-
-   But on real devices, sometimes you get that, but sometimes you get:
-
-     touchesBegan [touchA, touchB]
-     touchesEnd [touchB]
-     touchesEnd [touchA]
-
-   Or even
-
-     touchesBegan [touchA]
-     touchesBegan [touchB]
-     touchesEnd [touchA]
-     touchesEnd [touchB]
-
-   So the only way to properly detect a "pinch" gesture is to remember
-   the start-point of each touch as it comes in; and the end-point of
-   each touch as those come in; and only process the gesture once the
-   number of touchEnds matches the number of touchBegins.
- */
-
-- (void) rotateMouse:(int)rot x:(int*)x y:(int *)y w:(int)w h:(int)h
-{
-  // This is a no-op unless contentScaleFactor != hackedContentScaleFactor.
-  // Currently, this is the iPad Retina only.
-  CGRect frame = [self bounds];		// Scale.
-  double s = [self hackedContentScaleFactor];
-  *x *= (backbuffer_size.width  / frame.size.width)  / s;
-  *y *= (backbuffer_size.height / frame.size.height) / s;
-}
-
-
-#if 0  // AudioToolbox/AudioToolbox.h
-- (void) beep
-{
-  // There's no way to play a standard system alert sound!
-  // We'd have to include our own WAV for that.  Eh, fuck it.
-  AudioServicesPlaySystemSound (kSystemSoundID_Vibrate);
-# if TARGET_IPHONE_SIMULATOR
-  NSLog(@"BEEP");  // The sim doesn't vibrate.
-# endif
-}
-#endif
-
-
 /* We distinguish between taps and drags.
-   - Drags (down, motion, up) are sent to the saver to handle.
+
+   - Drags/pans (down, motion, up) are sent to the saver to handle.
    - Single-taps exit the saver.
+   - Double-taps are sent to the saver as a "Space" keypress.
+   - Swipes (really, two-finger drags/pans) send Up/Down/Left/RightArrow keys.
+
    This means a saver cannot respond to a single-tap.  Only a few try to.
  */
 
-- (void)touchesBegan:(NSSet *)touches withEvent:(UIEvent *)event
+- (void)initGestures
 {
-  // If they are trying to pinch, just do nothing.
-  if ([[event allTouches] count] > 1)
-    return;
+  UITapGestureRecognizer *dtap = [[UITapGestureRecognizer alloc]
+                                   initWithTarget:self
+                                   action:@selector(handleDoubleTap)];
+  dtap.numberOfTapsRequired = 2;
+  dtap.numberOfTouchesRequired = 1;
 
-  tap_time = 0;
+  UITapGestureRecognizer *stap = [[UITapGestureRecognizer alloc]
+                                   initWithTarget:self
+                                   action:@selector(handleTap)];
+  stap.numberOfTapsRequired = 1;
+  stap.numberOfTouchesRequired = 1;
+ 
+  UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc]
+                                  initWithTarget:self
+                                  action:@selector(handlePan:)];
+  pan.maximumNumberOfTouches = 1;
+  pan.minimumNumberOfTouches = 1;
+ 
+  // I couldn't get Swipe to work, but using a second Pan recognizer works.
+  UIPanGestureRecognizer *pan2 = [[UIPanGestureRecognizer alloc]
+                                   initWithTarget:self
+                                   action:@selector(handlePan2:)];
+  pan2.maximumNumberOfTouches = 2;
+  pan2.minimumNumberOfTouches = 2;
 
-  if (xsft->event_cb && xwindow) {
-    double s = [self hackedContentScaleFactor];
-    XEvent xe;
-    memset (&xe, 0, sizeof(xe));
-    int i = 0;
-    // #### 'frame' here or 'bounds'?
-    int w = s * [self frame].size.width;
-    int h = s * [self frame].size.height;
-    for (UITouch *touch in touches) {
-      CGPoint p = [touch locationInView:self];
-      xe.xany.type = ButtonPress;
-      xe.xbutton.button = i + 1;
-      xe.xbutton.button = i + 1;
-      xe.xbutton.x      = s * p.x;
-      xe.xbutton.y      = s * p.y;
-      [self rotateMouse: rot_current_angle
-            x: &xe.xbutton.x y: &xe.xbutton.y w: w h: h];
-      jwxyz_mouse_moved (xdpy, xwindow, xe.xbutton.x, xe.xbutton.y);
+  // Also handle long-touch, and treat that the same as Pan.
+  // Without this, panning doesn't start until there's motion, so the trick
+  // of holding down your finger to freeze the scene doesn't work.
+  //
+  UILongPressGestureRecognizer *hold = [[UILongPressGestureRecognizer alloc]
+                                         initWithTarget:self
+                                         action:@selector(handleLongPress:)];
+  hold.numberOfTapsRequired = 0;
+  hold.numberOfTouchesRequired = 1;
+  hold.minimumPressDuration = 0.25;   /* 1/4th second */
 
-      // Ignore return code: don't care whether the hack handled it.
-      xsft->event_cb (xdpy, xwindow, xdata, &xe);
+  [stap requireGestureRecognizerToFail: dtap];
+  [stap requireGestureRecognizerToFail: hold];
+  [dtap requireGestureRecognizerToFail: hold];
+  [pan  requireGestureRecognizerToFail: hold];
 
-      // Remember when/where this was, to determine tap versus drag or hold.
-      tap_time = double_time();
-      tap_point = p;
+  [self setMultipleTouchEnabled:YES];
 
-      i++;
-      break;  // No pinches: only look at the first touch.
-    }
-  }
+  [self addGestureRecognizer: dtap];
+  [self addGestureRecognizer: stap];
+  [self addGestureRecognizer: pan];
+  [self addGestureRecognizer: pan2];
+  [self addGestureRecognizer: hold];
+
+  [dtap release];
+  [stap release];
+  [pan  release];
+  [pan2 release];
+  [hold release];
 }
 
 
-- (void)touchesEnded:(NSSet *)touches withEvent:(UIEvent *)event
+/* Given a mouse (touch) coordinate in unrotated, unscaled view coordinates,
+   convert it to what X11 and OpenGL expect.
+ */
+- (void) convertMouse:(int)rot x:(int*)x y:(int *)y
 {
-  // If they are trying to pinch, just do nothing.
-  if ([[event allTouches] count] > 1)
-    return;
+  int w = [self frame].size.width;
+  int h = [self frame].size.height;
+  int xx = *x, yy = *y;
+  int swap;
 
-  if (xsft->event_cb && xwindow) {
-    double s = [self hackedContentScaleFactor];
-    XEvent xe;
-    memset (&xe, 0, sizeof(xe));
-    int i = 0;
-    // #### 'frame' here or 'bounds'?
-    int w = s * [self frame].size.width;
-    int h = s * [self frame].size.height;
-    for (UITouch *touch in touches) {
-      CGPoint p = [touch locationInView:self];
-
-      // If the ButtonRelease came less than half a second after ButtonPress,
-      // and didn't move far, then this was a tap, not a drag or a hold.
-      // Interpret it as "exit".
-      //
-      double dist = sqrt (((p.x - tap_point.x) * (p.x - tap_point.x)) +
-                          ((p.y - tap_point.y) * (p.y - tap_point.y)));
-      if (tap_time + 0.5 >= double_time() && dist < 20) {
-        [self stopAndClose:NO];
-        return;
-      }
-
-      xe.xany.type      = ButtonRelease;
-      xe.xbutton.button = i + 1;
-      xe.xbutton.x      = s * p.x;
-      xe.xbutton.y      = s * p.y;
-      [self rotateMouse: rot_current_angle
-            x: &xe.xbutton.x y: &xe.xbutton.y w: w h: h];
-      jwxyz_mouse_moved (xdpy, xwindow, xe.xbutton.x, xe.xbutton.y);
-      xsft->event_cb (xdpy, xwindow, xdata, &xe);
-      i++;
-      break;  // No pinches: only look at the first touch.
+  if (ignore_rotation_p) {
+    // We need to rotate the coordinates to match the unrotated X11 window.
+    switch (orientation) {
+    case UIDeviceOrientationLandscapeRight:
+      swap = xx; xx = h-yy; yy = swap;
+      break;
+    case UIDeviceOrientationLandscapeLeft:
+      swap = xx; xx = yy; yy = w-swap;
+      break;
+    case UIDeviceOrientationPortraitUpsideDown: 
+      xx = w-xx; yy = h-yy;
+    default:
+      break;
     }
   }
+
+  double s = [self contentScaleFactor];
+  *x = xx * s;
+  *y = yy * s;
+
+# if TARGET_IPHONE_SIMULATOR
+  NSLog (@"touch %4d, %-4d in %4d x %-4d  %d %d\n",
+         *x, *y, (int)(w*s), (int)(h*s),
+         ignore_rotation_p, [self reshapeRotatedWindow]);
+# endif
 }
 
 
-- (void)touchesMoved:(NSSet *)touches withEvent:(UIEvent *)event
+/* Single click exits saver.
+ */
+- (void) handleTap
 {
-  // If they are trying to pinch, just do nothing.
-  if ([[event allTouches] count] > 1)
+  [self stopAndClose:NO];
+}
+
+
+/* Double click sends Space KeyPress.
+ */
+- (void) handleDoubleTap
+{
+  if (!xsft->event_cb || !xwindow) return;
+
+  XEvent xe;
+  memset (&xe, 0, sizeof(xe));
+  xe.xkey.keycode = ' ';
+  xe.xany.type = KeyPress;
+  BOOL ok1 = [self sendEvent: &xe];
+  xe.xany.type = KeyRelease;
+  BOOL ok2 = [self sendEvent: &xe];
+  if (!(ok1 || ok2))
+    [self beep];
+}
+
+
+/* Drag with one finger down: send MotionNotify.
+ */
+- (void) handlePan:(UIGestureRecognizer *)sender
+{
+  if (!xsft->event_cb || !xwindow) return;
+
+  XEvent xe;
+  memset (&xe, 0, sizeof(xe));
+
+  CGPoint p = [sender locationInView:self];  // this is in points, not pixels
+  int x = p.x;
+  int y = p.y;
+  [self convertMouse: rot_current_angle x:&x y:&y];
+  jwxyz_mouse_moved (xdpy, xwindow, x, y);
+
+  switch (sender.state) {
+  case UIGestureRecognizerStateBegan:
+    xe.xany.type = ButtonPress;
+    xe.xbutton.button = 1;
+    xe.xbutton.x = x;
+    xe.xbutton.y = y;
+    break;
+
+  case UIGestureRecognizerStateEnded:
+    xe.xany.type = ButtonRelease;
+    xe.xbutton.button = 1;
+    xe.xbutton.x = x;
+    xe.xbutton.y = y;
+    break;
+
+  case UIGestureRecognizerStateChanged:
+    xe.xany.type = MotionNotify;
+    xe.xmotion.x = x;
+    xe.xmotion.y = y;
+    break;
+
+  default:
+    break;
+  }
+
+  BOOL ok = [self sendEvent: &xe];
+  if (!ok && xe.xany.type == ButtonRelease)
+    [self beep];
+}
+
+
+/* Hold one finger down: assume we're about to start dragging.
+   Treat the same as Pan.
+ */
+- (void) handleLongPress:(UIGestureRecognizer *)sender
+{
+  [self handlePan:sender];
+}
+
+
+
+/* Drag with 2 fingers down: send arrow keys.
+ */
+- (void) handlePan2:(UIPanGestureRecognizer *)sender
+{
+  if (!xsft->event_cb || !xwindow) return;
+
+  if (sender.state != UIGestureRecognizerStateEnded)
     return;
 
-  if (xsft->event_cb && xwindow) {
-    double s = [self hackedContentScaleFactor];
-    XEvent xe;
-    memset (&xe, 0, sizeof(xe));
-    int i = 0;
-    // #### 'frame' here or 'bounds'?
-    int w = s * [self frame].size.width;
-    int h = s * [self frame].size.height;
-    for (UITouch *touch in touches) {
-      CGPoint p = [touch locationInView:self];
-      xe.xany.type      = MotionNotify;
-      xe.xmotion.x      = s * p.x;
-      xe.xmotion.y      = s * p.y;
-      [self rotateMouse: rot_current_angle
-            x: &xe.xbutton.x y: &xe.xbutton.y w: w h: h];
-      jwxyz_mouse_moved (xdpy, xwindow, xe.xmotion.x, xe.xmotion.y);
-      xsft->event_cb (xdpy, xwindow, xdata, &xe);
-      i++;
-      break;  // No pinches: only look at the first touch.
-    }
-  }
+  XEvent xe;
+  memset (&xe, 0, sizeof(xe));
+
+  CGPoint p = [sender locationInView:self];  // this is in points, not pixels
+  int x = p.x;
+  int y = p.y;
+  [self convertMouse: rot_current_angle x:&x y:&y];
+
+  if (abs(x) > abs(y))
+    xe.xkey.keycode = (x > 0 ? XK_Right : XK_Left);
+  else
+    xe.xkey.keycode = (y > 0 ? XK_Down : XK_Up);
+
+  BOOL ok1 = [self sendEvent: &xe];
+  xe.xany.type = KeyRelease;
+  BOOL ok2 = [self sendEvent: &xe];
+  if (!(ok1 || ok2))
+    [self beep];
 }
 
 

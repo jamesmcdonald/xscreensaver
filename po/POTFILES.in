@@ -1,8 +1,8 @@
-# Auto-generated: Sun Jun  8 14:43:58 PDT 2014
+# Auto-generated: Tue Nov 18 23:24:06 PST 2014
 driver/demo-Gtk-conf.c
 driver/demo-Gtk.c
 driver/screensaver-properties.desktop.in
-driver/xscreensaver-demo.glade2
+driver/xscreensaver-demo.glade2.in
 hacks/config/abstractile.xml
 hacks/config/anemone.xml
 hacks/config/anemotaxis.xml
@@ -16,6 +16,7 @@ hacks/config/atlantis.xml
 hacks/config/attraction.xml
 hacks/config/atunnel.xml
 hacks/config/barcode.xml
+hacks/config/binaryring.xml
 hacks/config/blaster.xml
 hacks/config/blinkbox.xml
 hacks/config/blitspin.xml
@@ -35,6 +36,7 @@ hacks/config/carousel.xml
 hacks/config/ccurve.xml
 hacks/config/celtic.xml
 hacks/config/circuit.xml
+hacks/config/cityflow.xml
 hacks/config/cloudlife.xml
 hacks/config/companioncube.xml
 hacks/config/compass.xml
@@ -81,6 +83,7 @@ hacks/config/fuzzyflakes.xml
 hacks/config/galaxy.xml
 hacks/config/gears.xml
 hacks/config/geodesic.xml
+hacks/config/geodesicgears.xml
 hacks/config/gflux.xml
 hacks/config/glblur.xml
 hacks/config/glcells.xml
@@ -223,6 +226,7 @@ hacks/config/wander.xml
 hacks/config/webcollage.xml
 hacks/config/whirlwindwarp.xml
 hacks/config/whirlygig.xml
+hacks/config/winduprobot.xml
 hacks/config/worm.xml
 hacks/config/wormhole.xml
 hacks/config/xanalogtv.xml

@@ -4,6 +4,8 @@
 
   <command arg="-root"/>
 
+  <video href="http://www.youtube.com/watch?v=enuZbkMiqCE"/>
+
   <number id="delay" type="slider" arg="-delay %"
           _label="Frame rate" _low-label="Low" _high-label="High"
           low="0" high="100000" default="30000"
@@ -32,8 +34,7 @@
   <xscreensaver-updater />
 
   <_description>
-Draws a series of rotating 3D boxes that intersect each other and
-eventually fill space.
+Boxes change shape and intersect each other, filling space.
 
 Written by Jamie Zawinski; 2003.
   </_description>

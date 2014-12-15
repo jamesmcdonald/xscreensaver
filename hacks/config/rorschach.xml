@@ -4,6 +4,8 @@
 
   <command arg="-root"/>
 
+  <video href="http://www.youtube.com/watch?v=G1OLn4Mdk5Y"/>
+
   <number id="iterations" type="slider" arg="-iterations %"
           _label="Iterations" _low-label="Small" _high-label="Large"
           low="0" high="10000" default="4000"/>
@@ -24,9 +26,7 @@
   <xscreensaver-updater />
 
   <_description>
-This generates random inkblot patterns via a reflected random walk.
-Any deep-seated neurotic tendencies which this program reveals
-are your own problem.
+Inkblot patterns via a reflected random walk.
 
 http://en.wikipedia.org/wiki/Rorschach_inkblot_test
 http://en.wikipedia.org/wiki/Random_walk

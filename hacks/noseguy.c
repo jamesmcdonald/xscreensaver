@@ -1,4 +1,4 @@
-/* xscreensaver, Copyright (c) 1992-2013 Jamie Zawinski <jwz@jwz.org>
+/* xscreensaver, Copyright (c) 1992-2014 Jamie Zawinski <jwz@jwz.org>
  *
  * Permission to use, copy, modify, distribute, and sell this software and its
  * documentation for any purpose is hereby granted without fee, provided that
@@ -17,6 +17,7 @@
 #include "screenhack.h"
 #include "xpm-pixmap.h"
 #include "textclient.h"
+#include "xft.h"
 
 #ifdef HAVE_COCOA
 # define HAVE_XPM
@@ -31,13 +32,15 @@ struct state {
   int Width, Height;
   GC fg_gc, bg_gc, text_fg_gc, text_bg_gc;
   int x, y;
-  XFontStruct *font;
+
+  XftFont  *xftfont;
+  XftColor  xftcolor;
+  XftDraw  *xftdraw;
 
   unsigned long interval;
   Pixmap left1, left2, right1, right2;
   Pixmap left_front, right_front, front, down;
 
-  char *program;
   text_data *tc;
 
   int state;	/* indicates states: walking or getting passwd */
@@ -377,10 +380,15 @@ talk (struct state *st, int force_erase)
 
     if (!(p2 = strchr(p, '\n')) || !p2[1])
       {
+        XGlyphInfo extents;
+
 	total = strlen (st->words);
 	strncpy (args[0], st->words, LINELEN);
 	args[0][LINELEN - 1] = 0;
-	width = XTextWidth(st->font, st->words, total);
+        XftTextExtentsUtf8 (st->dpy, st->xftfont, 
+                            (FcChar8 *) st->words, total,
+                            &extents);
+        width = extents.xOff;
 	height = 0;
       }
     else
@@ -388,9 +396,16 @@ talk (struct state *st, int force_erase)
       for (height = 0; p; height++)
 	{
 	  int             w;
+          XGlyphInfo extents;
 	  *p2 = 0;
-	  if ((w = XTextWidth(st->font, p, p2 - p)) > width)
-	    width = w;
+
+          XftTextExtentsUtf8 (st->dpy, st->xftfont, 
+                              (FcChar8 *) p, p2 - p,
+                              &extents);
+          w = extents.xOff;
+	  if (w > width)
+            width = w;
+
 	  total += p2 - p;	/* total chars; count to determine reading
 				 * time */
 	  (void) strncpy(args[height], p, LINELEN);
@@ -411,7 +426,7 @@ talk (struct state *st, int force_erase)
      * new box by 15 pixels on the sides (30 total) top and bottom.
      */
     st->s_rect.width = width + 30;
-    st->s_rect.height = height * font_height(st->font) + 30;
+    st->s_rect.height = height * font_height(st->xftfont) + 30;
     if (st->x - st->s_rect.width - 10 < 5)
 	st->s_rect.x = 5;
     else if ((st->s_rect.x = st->x + 32 - (st->s_rect.width + 15) / 2)
@@ -434,7 +449,7 @@ talk (struct state *st, int force_erase)
 	 st->s_rect.x + 7, st->s_rect.y + 7, st->s_rect.width - 15, st->s_rect.height - 15);
 
     st->X = 15;
-    st->Y = 15 + font_height(st->font);
+    st->Y = 15 + font_height(st->xftfont);
 
     /* now print each string in reverse order (start at bottom of box) */
     for (Z = 0; Z < height; Z++)
@@ -443,9 +458,11 @@ talk (struct state *st, int force_erase)
         /* If there are continuous new lines, L can be 0 */
         if (L && (args[Z][L-1] == '\r' || args[Z][L-1] == '\n'))
           args[Z][--L] = 0;
-	XDrawString(st->dpy, st->window, st->text_fg_gc, st->s_rect.x + st->X, st->s_rect.y + st->Y,
-		    args[Z], L);
-	st->Y += font_height(st->font);
+        XftDrawStringUtf8 (st->xftdraw, &st->xftcolor, st->xftfont,
+                           st->s_rect.x + st->X, st->s_rect.y + st->Y,
+                           (FcChar8 *) args[Z], L);
+
+	st->Y += font_height(st->xftfont);
     }
     st->interval = (total / 15) * 1000;
     if (st->interval < 2000) st->interval = 2000;
@@ -490,18 +507,28 @@ static void
 fill_words (struct state *st)
 {
   char *p = st->words + strlen(st->words);
+  char *c;
+  int lines = 0;
+  int max = MAXLINES;
+
+  for (c = st->words; c < p; c++)
+    if (*c == '\n')
+      lines++;
+
   while (p < st->words + sizeof(st->words) - 1 &&
-         st->lines < MAXLINES)
+         lines < max)
     {
       int c = textclient_getc (st->tc);
       if (c == '\n')
-        st->lines++;
+        lines++;
       if (c > 0)
         *p++ = (char) c;
       else
         break;
     }
   *p = 0;
+
+  st->lines = lines;
 }
 
 
@@ -512,9 +539,9 @@ static const char *noseguy_defaults [] = {
   "*textForeground: black",
   "*textBackground: #CCCCCC",
   "*fpsSolid:	 true",
-  "*program:	 xscreensaver-text --cols 40 | head -n15",
+  "*program:	 xscreensaver-text",
   "*usePty:      False",
-  ".font:	 -*-new century schoolbook-*-r-*-*-*-180-*-*-*-*-*-*",
+  ".font:	 -*-helvetica-medium-r-*-*-*-140-*-*-*-*-*-*",
   0
 };
 
@@ -546,17 +573,26 @@ noseguy_init (Display *d, Window w)
   st->Height = xgwa.height + 2;
   cmap = xgwa.colormap;
 
-  st->program = get_string_resource (st->dpy, "program", "Program");
   st->tc = textclient_open (st->dpy);
+  {
+    int w = 40;
+    int h = 15;
+    textclient_reshape (st->tc, w, h, w, h,
+                        /* Passing MAXLINES isn't actually necessary */
+                        0);
+  }
+
   init_images(st);
 
-  if (!fontname || !*fontname)
-    fprintf (stderr, "%s: no font specified.\n", progname);
-  st->font = XLoadQueryFont(st->dpy, fontname);
-  if (!st->font) {
-    fprintf (stderr, "%s: could not load font %s.\n", progname, fontname);
-    exit(1);
-  }
+  st->xftfont = XftFontOpenXlfd (st->dpy, screen_number (xgwa.screen),
+                                 fontname);
+  XftColorAllocName (st->dpy, xgwa.visual, xgwa.colormap,
+                     get_string_resource (st->dpy,
+                                          "textForeground", "Foreground"),
+                     &st->xftcolor);
+  st->xftdraw = XftDrawCreate (st->dpy, st->window, xgwa.visual,
+                               xgwa.colormap);
+
 
   fg = get_pixel_resource (st->dpy, cmap, "foreground", "Foreground");
   bg = get_pixel_resource (st->dpy, cmap, "background", "Background");
@@ -568,26 +604,25 @@ noseguy_init (Display *d, Window w)
   if (! get_string_resource (st->dpy, "textBackground", "Background"))
     text_bg = fg;
 
-  gcvalues.font = st->font->fid;
   gcvalues.foreground = fg;
   gcvalues.background = bg;
   st->fg_gc = XCreateGC (st->dpy, st->window,
-                         GCForeground|GCBackground|GCFont,
+                         GCForeground|GCBackground,
 		     &gcvalues);
   gcvalues.foreground = bg;
   gcvalues.background = fg;
   st->bg_gc = XCreateGC (st->dpy, st->window,
-                         GCForeground|GCBackground|GCFont,
+                         GCForeground|GCBackground,
 		     &gcvalues);
   gcvalues.foreground = text_fg;
   gcvalues.background = text_bg;
   st->text_fg_gc = XCreateGC (st->dpy, st->window,
-                              GCForeground|GCBackground|GCFont,
+                              GCForeground|GCBackground,
 			  &gcvalues);
   gcvalues.foreground = text_bg;
   gcvalues.background = text_fg;
   st->text_bg_gc = XCreateGC (st->dpy, st->window, 
-                              GCForeground|GCBackground|GCFont,
+                              GCForeground|GCBackground,
 			  &gcvalues);
   st->x = st->Width / 2;
   st->y = st->Height / 2;

@@ -29,6 +29,7 @@
 "*visualID:		default",
 "*captureStderr: 	True",
 "*ignoreUninstalledPrograms: False",
+"*authWarningSlack:	20",
 "*textMode:		file",
 "*textLiteral:		XScreenSaver",
 "*textFile:		",
@@ -46,9 +47,9 @@
 "*demoCommand: xscreensaver-demo",
 "*prefsCommand: xscreensaver-demo -prefs",
 "*helpURL: http://www.jwz.org/xscreensaver/man.html",
-"*loadURL: gnome-open '%s'",
-"*manualCommand: gnome-terminal --title '%s manual' \
-		--command '/bin/sh -c \"man %s; read foo\"'",
+"*loadURL: firefox '%s' || mozilla '%s' || netscape '%s'",
+"*manualCommand: xterm -sb -fg black -bg gray75 -T '%s manual' \
+		    -e /bin/sh -c 'man \"%s\" ; read foo'",
 "*dateFormat:		%d-%b-%y (%a); %I:%M %p",
 "*installColormap:	True",
 "*programs:								      \
@@ -111,7 +112,7 @@
 				distort -root				    \\n\
 				epicycle -root				    \\n\
 				flow -root				    \\n\
-- GL: 				glplanet -root				    \\n\
+  GL: 				glplanet -root				    \\n\
 				interference -root			    \\n\
 				kumppa -root				    \\n\
   GL: 				lament -root				    \\n\
@@ -126,7 +127,7 @@
 				compass -root				    \\n\
 				deluxe -root				    \\n\
 -				demon -root				    \\n\
-- GL: 				extrusion -root				    \\n\
+  GL: 				extrusion -root				    \\n\
 -				loop -root				    \\n\
 				penetrate -root				    \\n\
 				petri -root				    \\n\
@@ -206,7 +207,7 @@
 				popsquares -root			    \\n\
   GL: 				surfaces -root				    \\n\
 				xanalogtv -root				    \\n\
--				abstractile -root			    \\n\
+				abstractile -root			    \\n\
 				anemotaxis -root			    \\n\
 - GL: 				antinspect -root			    \\n\
 				fireworkx -root				    \\n\
@@ -257,8 +258,12 @@
   GL: 				kaleidocycle -root			    \\n\
   GL: 				quasicrystal -root			    \\n\
   GL: 				unknownpleasures -root			    \\n\
+				binaryring -root			    \\n\
+  GL: 				cityflow -root				    \\n\
+  GL: 				geodesicgears -root			    \\n\
   GL: 				projectiveplane -root			    \\n\
-				tessellimage -root			    \\n",
+				tessellimage -root			    \\n\
+  GL: 				winduprobot -root			    \\n",
 "XScreenSaver.pointerPollTime:		0:00:05",
 "XScreenSaver.pointerHysteresis:		10",
 "XScreenSaver.initialDelay:		0:00:00",
@@ -295,13 +300,14 @@
 "*passwd.asterisks:              True",
 "*passwd.uname:                  True",
 "*splash.heading.label:		XScreenSaver %s",
-"*splash.body.label:		Copyright \\xa9 1991-2014 by",
+"*splash.body.label:		Copyright \\251 1991-2014 by",
 "*splash.body2.label:		Jamie Zawinski <jwz@jwz.org>",
 "*splash.demo.label:		Settings",
 "*splash.help.label:		Help",
 "*hacks.antinspect.name:     AntInspect",
 "*hacks.antmaze.name:        AntMaze",
 "*hacks.antspotlight.name:   AntSpotlight",
+"*hacks.binaryring.name:     BinaryRing",
 "*hacks.blinkbox.name:       BlinkBox",
 "*hacks.blitspin.name:       BlitSpin",
 "*hacks.blocktube.name:      BlockTube",
@@ -327,6 +333,7 @@
 "*hacks.flyingtoasters.name: FlyingToasters",
 "*hacks.fontglide.name:      FontGlide",
 "*hacks.fuzzyflakes.name:    FuzzyFlakes",
+"*hacks.geodesicgears.name:  GeodesicGears",
 "*hacks.gflux.name:          GFlux",
 "*hacks.gleidescope.name:    Gleidescope",
 "*hacks.glforestfire.name:   GLForestFire",
@@ -369,6 +376,7 @@
 "*hacks.vidwhacker.name:     VidWhacker",
 "*hacks.webcollage.name:     WebCollage",
 "*hacks.whirlwindwarp.name:  WhirlWindWarp",
+"*hacks.winduprobot.name:    WindupRobot",
 "*hacks.xanalogtv.name:      XAnalogTV",
 "*hacks.xrayswarm.name:      XRaySwarm",
 "*hacks.documentation.isInstalled: True",

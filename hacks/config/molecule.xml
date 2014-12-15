@@ -4,6 +4,8 @@
 
   <command arg="-root"/>
 
+  <video href="http://www.youtube.com/watch?v=D1A0tNcPL4M"/>
+
   <number id="delay" type="slider" arg="-delay %"
           _label="Frame rate" _low-label="Low" _high-label="High"
           low="0" high="100000" default="10000"
@@ -48,9 +50,8 @@
   <xscreensaver-updater />
 
   <_description>
-Draws several different representations of molecules.  Some common
-molecules are built in, and it can also read PDB (Protein Data Bank)
-files as input.
+Some interesting molecules. Several molecules are built in, and it can
+also read PDB (Protein Data Bank) files as input.
 
 http://en.wikipedia.org/wiki/Protein_Data_Bank_%28file_format%29
 

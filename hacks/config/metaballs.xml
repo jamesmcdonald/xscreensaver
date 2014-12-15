@@ -4,6 +4,8 @@
 
   <command arg="-root"/>
 
+  <video href="http://www.youtube.com/watch?v=wcdKHCp9foY"/>
+
  <!-- #### -color [random] -->
 
   <hgroup>
@@ -42,9 +44,7 @@
   <xscreensaver-updater />
 
   <_description>
-
-Draws two dimensional metaballs: overlapping and merging balls with
-fuzzy edges.
+2D meta-balls: overlapping and merging balls with fuzzy edges.
 
 http://en.wikipedia.org/wiki/Metaballs
 

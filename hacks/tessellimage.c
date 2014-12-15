@@ -543,6 +543,9 @@ tessellate (struct state *st)
       st->pgc = XCreateGC(st->dpy, st->image, GCFunction, &gcv);
     }
 
+  if (! st->nthreshes) return;
+
+
   /* If duration2 has expired, switch to the next threshold. */
 
   if (! st->button_down_p)
@@ -856,6 +859,14 @@ tessellimage_draw (Display *dpy, Window window, void *closure)
                0, 0, st->delta->width, st->delta->height, 
                (st->xgwa.width  - st->delta->width)  / 2,
                (st->xgwa.height - st->delta->height) / 2);
+  else if (!st->nthreshes)
+    XCopyArea (st->dpy,
+               st->image,
+               st->window, st->wgc,
+               0, 0, st->xgwa.width, st->xgwa.height,
+               0,
+               0);
+
 
  DONE:
   return st->delay;
@@ -883,30 +894,10 @@ tessellimage_event (Display *dpy, Window window, void *closure, XEvent *event)
       st->button_down_p = False;
       return True;
     }
-  else if (event->xany.type == KeyPress)
+  else if (screenhack_event_helper (dpy, window, event))
     {
-      KeySym keysym = 0;
-      char c = 0;
-      if (event->xany.type == KeyPress || event->xany.type == KeyRelease)
-        XLookupString (&event->xkey, &c, 1, &keysym, 0);
-
-      switch (keysym) {
-      case XK_Left:
-      case XK_Right:
-      case XK_Down:
-      case XK_Up:
-        st->start_time = 0;   /* load next image */
-        return True;
-      }
-
-      switch (c) {
-      case '\r':
-      case '\n':
-      case '+':
-      case '=':
-        st->start_time = 0;
-        return True;
-      }
+      st->start_time = 0;   /* load next image */
+      return True;
     }
 
   return False;
@@ -943,6 +934,7 @@ static const char *tessellimage_defaults [] = {
   "*cache:			True",
 #ifdef USE_IPHONE
   "*ignoreRotation:             True",
+  "*rotateImages:               True",
 #endif
   0
 };

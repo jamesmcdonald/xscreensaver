@@ -4,6 +4,8 @@
 
   <command arg="-root"/>
 
+  <video href="http://www.youtube.com/watch?v=FP8YJzFkdoQ"/>
+
   <number id="delay2" type="slider" arg="-delay2 %"
           _label="Frame rate" _low-label="Low" _high-label="High"
           low="0" high="100000" default="20000"
@@ -33,11 +35,11 @@
   <xscreensaver-updater />
 
   <_description>
-This generates random cloud-like patterns.  The idea is to take four
-points on the edge of the image, and assign each a random "elevation".
-Then find the point between them, and give it a value which is the
-average of the other four, plus some small random offset. 
-Coloration is done based on elevation.
+Cloud-like patterns.  The idea is to take four points on the edge of
+the image, and assign each a random "elevation".  Then find the point
+between them, and give it a value which is the average of the other
+four, plus some small random offset. Coloration is done based on
+elevation.
 
 Written by Juergen Nickelsen and Jamie Zawinski; 1992.
   </_description>

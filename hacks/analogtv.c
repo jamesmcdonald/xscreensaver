@@ -65,6 +65,7 @@
 # include <X11/Xlib.h>
 # include <X11/Xutil.h>
 #endif
+#include <limits.h>
 
 #include <assert.h>
 #include <errno.h>
@@ -77,7 +78,7 @@
 
 /* #define DEBUG 1 */
 
-#ifdef DEBUG
+#if defined(DEBUG) && (defined(__linux) || defined(__FreeBSD__))
 /* only works on linux + freebsd */
 #include <machine/cpufunc.h>
 
@@ -216,8 +217,8 @@ analogtv_set_defaults(analogtv *it, char *prefix)
   printf("  controls: tint=%g color=%g brightness=%g contrast=%g\n",
          it->tint_control, it->color_control, it->brightness_control,
          it->contrast_control);
-  printf("  freq_error %g: %g %d\n",
-         it->freq_error, it->freq_error_inc, it->flutter_tint);
+/*  printf("  freq_error %g: %g %d\n",
+         it->freq_error, it->freq_error_inc, it->flutter_tint); */
   printf("  desync: %g %d\n",
          it->horiz_desync, it->flutter_horiz_desync);
   printf("  hashnoise rpm: %g\n",
@@ -319,19 +320,18 @@ analogtv_configure(analogtv *it)
   /* If the window is very small, don't let the image we draw get lower
      than the actual TV resolution (266x200.)
 
-     If the aspect ratio of the window is within 15% of a 4:3 ratio,
+     If the aspect ratio of the window is close to a 4:3 or 16:9 ratio,
      then scale the image to exactly fill the window.
 
      Otherwise, center the image either horizontally or vertically,
-     padding on the left+right, or top+bottom, but not both.
+     letterboxing or pillarboxing (but not both).
 
      If it's very close (2.5%) to a multiple of VISLINES, make it exact
      For example, it maps 1024 => 1000.
    */
-  float percent = 0.15;  /* jwz: 20% caused severe top/bottom clipping
-                                 in Pong on 1680x1050 iMac screen. */
-  float min_ratio = 4.0 / 3.0 * (1 - percent);
-  float max_ratio = 4.0 / 3.0 * (1 + percent);
+  float percent = 0.15;
+  float min_ratio =  4.0 / 3.0 * (1 - percent);
+  float max_ratio = 16.0 / 9.0 * (1 + percent);
   float ratio;
   float height_snap=0.025;
 
@@ -341,8 +341,8 @@ analogtv_configure(analogtv *it)
 
 #ifdef USE_IPHONE
   /* Fill the whole iPhone screen, even though that distorts the image. */
-  min_ratio = 640.0 / 1136.0 * (1 - percent);
-  max_ratio = 1136.0 / 640.0 * (1 + percent);
+  min_ratio = 0;
+  max_ratio = 10;
 #endif
 
   if (wlim < 266 || hlim < 200)
@@ -364,7 +364,7 @@ analogtv_configure(analogtv *it)
                wlim, hlim, min_ratio, ratio, max_ratio);
 # endif
     }
-  else if (ratio > max_ratio)
+  else if (ratio >= max_ratio)
     {
       wlim = hlim*max_ratio;
 # ifdef DEBUG
@@ -374,7 +374,7 @@ analogtv_configure(analogtv *it)
                min_ratio, ratio, max_ratio);
 # endif
     }
-  else /* ratio < min_ratio */
+  else /* ratio <= min_ratio */
     {
       hlim = wlim/min_ratio;
 # ifdef DEBUG
@@ -942,11 +942,13 @@ analogtv_setup_frame(analogtv *it)
   }
   if (it->hashnoise_rpm > 0.0) {
     int hni;
+    double hni_double;
     int hnc=it->hashnoise_counter; /* in 24.8 format */
 
     /* Convert rpm of a 16-pole motor into dots in 24.8 format */
-    hni = (int)(ANALOGTV_V * ANALOGTV_H * 256.0 /
-                (it->hashnoise_rpm * 16.0 / 60.0 / 60.0));
+    hni_double = ANALOGTV_V * ANALOGTV_H * 256.0 /
+                (it->hashnoise_rpm * 16.0 / 60.0 / 60.0);
+    hni = (hni_double <= INT_MAX) ? (int)hni_double : INT_MAX;
 
     while (hnc < (ANALOGTV_V * ANALOGTV_H)<<8) {
       y=(hnc>>8)/ANALOGTV_H;
@@ -955,7 +957,12 @@ analogtv_setup_frame(analogtv *it)
       if (x>0 && x<ANALOGTV_H - ANALOGTV_HASHNOISE_LEN) {
         it->hashnoise_times[y]=x;
       }
-      hnc += hni + (int)(random()%65536)-32768;
+      /* hnc += hni + (int)(random()%65536)-32768; */
+      {
+        hnc += (int)(random()%65536)-32768;
+        if ((hnc >= 0) && (INT_MAX - hnc < hni)) break;
+        hnc += hni;
+      }
     }
 /*    hnc -= (ANALOGTV_V * ANALOGTV_H)<<8;*/
   }
@@ -1196,14 +1203,17 @@ static void analogtv_init_signal(const analogtv *it, double noiselevel, unsigned
   float *pe=it->rx_signal + end;
   float *p=ps;
   unsigned int fastrnd=rnd_seek(FASTRND_A, FASTRND_C, it->random0, start);
+  unsigned int fastrnd_offset;
   float nm1,nm2;
   float noisemul = sqrt(noiselevel*150)/(float)0x7fffffff;
 
-  nm1 = ((int)fastrnd-(int)0x7fffffff) * noisemul;
+  fastrnd_offset = fastrnd - 0x7fffffff;
+  nm1 = (fastrnd_offset <= INT_MAX ? (int)fastrnd_offset : -1 - (int)(UINT_MAX - fastrnd_offset)) * noisemul;
   while (p != pe) {
     nm2=nm1;
     fastrnd = (fastrnd*FASTRND_A+FASTRND_C) & 0xffffffffu;
-    nm1 = ((int)fastrnd-(int)0x7fffffff) * noisemul;
+    fastrnd_offset = fastrnd - 0x7fffffff;
+    nm1 = (fastrnd_offset <= INT_MAX ? (int)fastrnd_offset : -1 - (int)(UINT_MAX - fastrnd_offset)) * noisemul;
     *p++ = nm1*nm2;
   }
 }
@@ -1244,7 +1254,8 @@ static void analogtv_add_signal(const analogtv *it, const analogtv_reception *re
     */
 
     float sig0=(float)s[0];
-    float noise = ((int)fastrnd-(int)0x7fffffff) * (50.0f/(float)0x7fffffff);
+    unsigned int fastrnd_offset = fastrnd - 0x7fffffff;
+    float noise = (fastrnd_offset <= INT_MAX ? (int)fastrnd_offset : -1 - (int)(UINT_MAX - fastrnd_offset)) * (50.0f/(float)0x7fffffff);
     fastrnd = (fastrnd*FASTRND_A+FASTRND_C) & 0xffffffffu;
 
     p[0] += sig0 * level * (1.0f - noise_ampl) + noise * noise_ampl;

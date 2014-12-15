@@ -24,7 +24,6 @@
 # import <UIKit/UIKit.h>
 # import <UIKit/UIScreen.h>
 # import <QuartzCore/QuartzCore.h>
-# import <CoreText/CTFont.h>
 # define NSView  UIView
 # define NSRect  CGRect
 # define NSPoint CGPoint
@@ -37,13 +36,18 @@
 # define NSWindow UIWindow
 # define NSMakeSize   CGSizeMake
 # define NSBezierPath UIBezierPath
+# define colorWithDeviceRed colorWithRed
 #else
 # import <Cocoa/Cocoa.h>
 #endif
 
+#import <CoreText/CTFont.h>
+#import <CoreText/CTLine.h>
+
 #import "jwxyz.h"
 #import "jwxyz-timers.h"
 #import "yarandom.h"
+#import "utf8wc.h"
 
 # define USE_BACKBUFFER  /* must be in sync with XScreenSaverView.h */
 
@@ -111,6 +115,10 @@ struct jwxyz_Font {
   // In X11, "Font" is just an ID, and "XFontStruct" contains the metrics.
   // But we need the metrics on both of them, so they go here.
   XFontStruct metrics;
+};
+
+struct jwxyz_XFontSet {
+  Font font;
 };
 
 
@@ -224,8 +232,7 @@ jwxyz_make_display (void *nsview_arg, void *cgc_arg)
 void
 jwxyz_free_display (Display *dpy)
 {
-  jwxyz_XtRemoveInput_all (dpy);
-  // #### jwxyz_XtRemoveTimeOut_all ();
+  jwxyz_sources_free (dpy->timers_data);
   
 # ifndef USE_IPHONE
   {
@@ -1913,7 +1920,7 @@ flipbits (unsigned const char *in, unsigned char *out, int length)
     0x0F, 0x8F, 0x4F, 0xCF, 0x2F, 0xAF, 0x6F, 0xEF, 
     0x1F, 0x9F, 0x5F, 0xDF, 0x3F, 0xBF, 0x7F, 0xFF
   };
-  while (--length > 0)
+  while (length-- > 0)
     *out++ = table[*in++];
 }
 
@@ -2475,7 +2482,8 @@ copy_pixmap (Display *dpy, Pixmap p)
    "rbearing" is the distance from the logical origin to the rightmost pixel.
 
    "descent" is the distance from the logical origin to the bottommost pixel.
-   For characters with descenders, it is negative.
+   For characters with descenders, it is positive.  For superscripts, it
+   is negative.
 
    "ascent" is the distance from the logical origin to the topmost pixel.
    It is the number of pixels above the baseline.
@@ -2486,6 +2494,46 @@ copy_pixmap (Display *dpy, Pixmap p)
    If "rbearing" is greater than "width", then this character overlaps the
    following character.  If smaller, then there is trailing blank space.
  */
+
+
+static void
+glyph_metrics (CTFontRef ctfont, CGGlyph cgglyph, XCharStruct *cs)
+{
+  CGRect bbox = CTFontGetBoundingRectsForGlyphs (ctfont,
+                                                 kCTFontDefaultOrientation,
+                                                 &cgglyph, NULL, 1);
+  CGSize advancement;
+  CTFontGetAdvancesForGlyphs (ctfont, kCTFontDefaultOrientation,
+                              &cgglyph, &advancement, 1);
+
+# ifndef USE_IPHONE
+  // Only necessary for when LCD smoothing is enabled, which iOS doesn't do.
+  bbox.origin.x    -= 2.0/3.0;
+  bbox.size.width  += 4.0/3.0;
+  bbox.size.height += 1.0/2.0;
+# endif
+
+//#define CEIL(F)  ((F) < 0 ? floor(F) : ceil(F))
+//#define FLOOR(F) ((F) < 0 ? ceil(F) : floor(F))
+#define CEIL(F)  ceil(F)
+#define FLOOR(F) floor(F)
+
+  /* Now that we know the advancement and bounding box, we can compute
+     the lbearing and rbearing.
+   */
+//cs->ascent   = CEIL (bbox.origin.y) + CEIL (bbox.size.height);
+  cs->ascent   = CEIL (bbox.origin.y + bbox.size.height);
+  cs->descent  = CEIL(-bbox.origin.y);
+  cs->lbearing = FLOOR (bbox.origin.x);
+//cs->rbearing = CEIL (bbox.origin.x) + CEIL (bbox.size.width);
+  cs->rbearing = CEIL (bbox.origin.x + bbox.size.width);
+  cs->width    = FLOOR (advancement.width + 0.5);
+
+  //  Assert (cs->rbearing - cs->lbearing == CEIL(bbox.size.width), 
+  //          "bbox w wrong");
+  //  Assert (cs->ascent   + cs->descent  == CEIL(bbox.size.height),
+  //          "bbox h wrong");
+}
 
 
 // This is XQueryFont, but for the XFontStruct embedded in 'Font'
@@ -2509,14 +2557,12 @@ query_font (Font fid)
   XCharStruct *min = &f->min_bounds;
   XCharStruct *max = &f->max_bounds;
 
-#define CEIL(F)  ((F) < 0 ? floor(F) : ceil(F))
-
   f->fid               = fid;
   f->min_char_or_byte2 = first;
   f->max_char_or_byte2 = last;
   f->default_char      = 'M';
   f->ascent            =  CEIL ([fid->nsfont ascender]);
-  f->descent           = -CEIL ([fid->nsfont descender]);
+  f->descent           = -FLOOR ([fid->nsfont descender]);
 
   min->width    = 255;  // set to smaller values in the loop
   min->ascent   = 255;
@@ -2525,74 +2571,16 @@ query_font (Font fid)
   min->rbearing = 255;
 
   f->per_char = (XCharStruct *) calloc (last-first+2, sizeof (XCharStruct));
-  int i;
+  UniChar i;
 
-# ifndef USE_IPHONE
-  NSBezierPath *bpath = [NSBezierPath bezierPath];
-# else  // USE_IPHONE
   CTFontRef ctfont =
     CTFontCreateWithName ((CFStringRef) [fid->nsfont fontName],
                           [fid->nsfont pointSize],
                           NULL);
   Assert (ctfont, @"no CTFontRef for UIFont");
-# endif // USE_IPHONE
 
   for (i = first; i <= last; i++) {
-    unsigned char str[2];
-    str[0] = i;
-    str[1] = 0;
-
-    NSString *nsstr = [NSString stringWithCString:(char *) str
-                                         encoding:NSISOLatin1StringEncoding];
-    NSPoint advancement = { 0, };
-    NSRect bbox = {{ 0, }, };
-
-# ifndef USE_IPHONE
-
-    /* I can't believe we have to go through this bullshit just to
-       convert a 'char' to an NSGlyph!!
-
-       You might think that we could do
-          NSGlyph glyph = [fid->nsfont glyphWithName:nsstr];
-       but that doesn't work; my guess is that glyphWithName expects
-       full Unicrud names like "LATIN CAPITAL LETTER A WITH ACUTE".
-     */
-    NSGlyph glyph;
-    {
-      NSTextStorage *ts = [[NSTextStorage alloc] initWithString:nsstr];
-      [ts setFont:fid->nsfont];
-      NSLayoutManager *lm = [[NSLayoutManager alloc] init];
-
-      /* Without this, the layout manager ends up on a queue somewhere and is
-         referenced again after we return to the command loop.  Since we don't
-         use this layout manager again, by that time it may have been garbage
-         collected, and we crash.  Setting this seems to cause `lm' to no 
-         longer be referenced once we exit this block. */
-      [lm setBackgroundLayoutEnabled:NO];
-
-      NSTextContainer *tc = [[NSTextContainer alloc] init];
-      [lm addTextContainer:tc];
-      [tc release];	// lm retains tc
-      [ts addLayoutManager:lm];
-      [lm release];	// ts retains lm
-      glyph = [lm glyphAtIndex:0];
-      [ts release];
-    }
-
-    /* Compute the bounding box and advancement by converting the glyph
-       to a bezier path.  There appears to be *no other way* to find out
-       the bounding box of a character: [NSFont boundingRectForGlyph] and
-       [NSString sizeWithAttributes] both return an advancement-sized
-       rectangle, not a rectangle completely enclosing the glyph's ink.
-     */
-    advancement.x = advancement.y = 0;
-    [bpath removeAllPoints];
-    [bpath moveToPoint:advancement];
-    [bpath appendBezierPathWithGlyph:glyph inFont:fid->nsfont];
-    advancement = [bpath currentPoint];
-    bbox = [bpath bounds];
-
-# else  // USE_IPHONE
+    XCharStruct *cs = &f->per_char[i-first];
 
     /* There is no way to get "lbearing", "rbearing" or "descent" out of
        NSFont.  'sizeWithFont' gives us "width" and "height" only.
@@ -2603,64 +2591,28 @@ query_font (Font fid)
        the CoreText library, but there's no non-CoreText way to turn a
        unichar into a CGGlyph.
      */
-    UniChar uchar = [nsstr characterAtIndex: 0];
     CGGlyph cgglyph = 0;
 
-    if (CTFontGetGlyphsForCharacters (ctfont, &uchar, &cgglyph, 1))
-      {
-        bbox = CTFontGetBoundingRectsForGlyphs (ctfont,
-                                                kCTFontDefaultOrientation,
-                                                &cgglyph, NULL, 1);
-        CGSize adv = { 0, };
-        CTFontGetAdvancesForGlyphs (ctfont, kCTFontDefaultOrientation,
-                                    &cgglyph, &adv, 1);
-        advancement.x = adv.width;
-        advancement.y = adv.height;
+    if (CTFontGetGlyphsForCharacters (ctfont, &i, &cgglyph, 1))
+      glyph_metrics (ctfont, cgglyph, cs);
+    else
+      // This is normal, since Latin1 does not encode 0-31 or 127-159.
+      memset (cs, 0, sizeof(*cs));
 
-        /* A bug that existed was that the GL FPS display was truncating
-           characters slightly: commas looked like periods.
-
-           At one point, I believed the bounding box was being rounded
-           wrong and we needed to add padding to it here.
-
-           I think what was actually going on was, I was computing rbearing
-           wrong.  Also there was an off-by-one error in texfont.c, displaying
-           too little of the bitmap.
-
-           Adding arbitrarily large padding to the bbox is fine in fontglide
-           and FPS display, but screws up BSOD. Increasing bbox width makes
-           inverted text print too wide; decreasing origin makes characters
-           clip.
-
-           I think that all 3 states are correct now with the new lbearing
-           computation plus the texfont fix.
-         */
-#  if 0
-        double kludge = 2;
-        bbox.origin.x    -= kludge;
-        bbox.origin.y    -= kludge;
-        bbox.size.width  += kludge;
-        bbox.size.height += kludge;
-#  endif
-      }
-# endif // USE_IPHONE
-
-    /* Now that we know the advancement and bounding box, we can compute
-       the lbearing and rbearing.
-     */
-    XCharStruct *cs = &f->per_char[i-first];
-
-    cs->ascent   = CEIL (bbox.origin.y) + CEIL (bbox.size.height);
-    cs->descent  = CEIL(-bbox.origin.y);
-    cs->lbearing = floor (bbox.origin.x);
-//  cs->rbearing = CEIL (bbox.origin.x) + CEIL (bbox.size.width);
-    cs->rbearing = CEIL (bbox.origin.x + bbox.size.width) - cs->lbearing;
-    cs->width    = CEIL (advancement.x);
-
-//  Assert (cs->rbearing - cs->lbearing == CEIL(bbox.size.width), 
-//          "bbox w wrong");
-    Assert (cs->ascent   + cs->descent  == CEIL(bbox.size.height),
-            "bbox h wrong");
+# if 0
+    if (i == 224) {  // Latin1 == "agrave", MacRoman == "daggerdouble".
+      NSString *glyph_name = (NSString *)
+        CGFontCopyGlyphNameForGlyph (CTFontCopyGraphicsFont (ctfont, 0),
+                                     cgglyph);
+      Assert ([glyph_name isEqualToString:@"agrave"], @"wrong encoding");
+    }
+    if (i == 250) {  // Latin1 == "uacute", MacRoman == "dotaccent".
+      NSString *glyph_name = (NSString *)
+        CGFontCopyGlyphNameForGlyph (CTFontCopyGraphicsFont (ctfont, 0),
+                                     cgglyph);
+      Assert ([glyph_name isEqualToString:@"uacute"], @"wrong encoding");
+    }
+# endif // 0
 
     max->width    = MAX (max->width,    cs->width);
     max->ascent   = MAX (max->ascent,   cs->ascent);
@@ -2675,21 +2627,20 @@ query_font (Font fid)
     min->rbearing = MIN (min->rbearing, cs->rbearing);
 
 # undef CEIL
+# undef FLOOR
 
-#if 0
+# if 0
     fprintf(stderr, " %3d %c: w=%3d lb=%3d rb=%3d as=%3d ds=%3d "
                     " bb=%5.1f x %5.1f @ %5.1f %5.1f  adv=%5.1f %5.1f\n",
             i, i, cs->width, cs->lbearing, cs->rbearing, 
             cs->ascent, cs->descent,
             bbox.size.width, bbox.size.height,
             bbox.origin.x, bbox.origin.y,
-            advancement.x, advancement.y);
-#endif
+            advancement.width, advancement.height);
+# endif // 0
   }
 
-# ifdef USE_IPHONE
   CFRelease (ctfont);
-# endif
 }
 
 
@@ -2703,7 +2654,7 @@ XQueryFont (Display *dpy, Font fid)
   *f = fid->metrics;
 
   // copy XCharStruct array
-  int size = f->max_char_or_byte2 - f->min_char_or_byte2;
+  int size = (f->max_char_or_byte2 - f->min_char_or_byte2) + 1;
   f->per_char = (XCharStruct *) calloc (size + 2, sizeof (XCharStruct));
   memcpy (f->per_char, fid->metrics.per_char,
           size * sizeof (XCharStruct));
@@ -3016,8 +2967,15 @@ XLoadFont (Display *dpy, const char *name)
   float scale = 1;
 
 # ifdef USE_IPHONE
-  // Scale up fonts on Retina displays.
-  scale = dpy->main_window->window.view.contentScaleFactor;
+  /* Since iOS screens are physically smaller than desktop screens, scale up
+     the fonts to make them more readable.
+
+     Note that X11 apps on iOS also have the backbuffer sized in points
+     instead of pixels, resulting in an effective X11 screen size of 768x1024
+     or so, even if the display has significantly higher resolution.  That is
+     unrelated to this hack, which is really about DPI.
+   */
+  scale = 2;
 # endif
 
   fid->nsfont = try_native_font (name, scale, &fid->ps_name, &fid->size);
@@ -3117,14 +3075,57 @@ XSetFont (Display *dpy, GC gc, Font fid)
   return 0;
 }
 
+
+XFontSet
+XCreateFontSet (Display *dpy, char *name, 
+                char ***missing_charset_list_return,
+                int *missing_charset_count_return,
+                char **def_string_return)
+{
+  char *name2 = strdup (name);
+  char *s = strchr (name, ",");
+  if (s) *s = 0;
+  XFontSet set = 0;
+  Font f = XLoadFont (dpy, name2);
+  if (f)
+    {
+      set = (XFontSet) calloc (1, sizeof(*set));
+      set->font = f;
+    }
+  free (name2);
+  if (missing_charset_list_return)  *missing_charset_list_return = 0;
+  if (missing_charset_count_return) *missing_charset_count_return = 0;
+  if (def_string_return) *def_string_return = 0;
+  return set;
+}
+
+
+void
+XFreeFontSet (Display *dpy, XFontSet set)
+{
+  XUnloadFont (dpy, set->font);
+  free (set);
+}
+
+
+void
+XFreeStringList (char **list)
+{
+  int i;
+  if (!list) return;
+  for (i = 0; list[i]; i++)
+    XFree (list[i]);
+  XFree (list);
+}
+
+
 int
 XTextExtents (XFontStruct *f, const char *s, int length,
               int *dir_ret, int *ascent_ret, int *descent_ret,
               XCharStruct *cs)
 {
   memset (cs, 0, sizeof(*cs));
-  int i;
-  for (i = 0; i < length; i++) {
+  for (int i = 0; i < length; i++) {
     unsigned char c = (unsigned char) s[i];
     if (c < f->min_char_or_byte2 || c > f->max_char_or_byte2)
       c = f->default_char;
@@ -3155,64 +3156,121 @@ XTextWidth (XFontStruct *f, const char *s, int length)
 }
 
 
-static void
-set_font (Display *dpy, CGContextRef cgc, GC gc)
+int
+XTextExtents16 (XFontStruct *f, const XChar2b *s, int length,
+                int *dir_ret, int *ascent_ret, int *descent_ret,
+                XCharStruct *cs)
 {
-  Font font = gc->gcv.font;
-  if (! font) {
-    font = XLoadFont (dpy, 0);
-    gc->gcv.font = font;
-    [gc->gcv.font->nsfont retain];
-    CFRetain (gc->gcv.font->nsfont);   // needed for garbage collection?
+  Font fid = f->fid;
+  CTFontRef ctfont =
+    CTFontCreateWithName ((CFStringRef) [fid->nsfont fontName],
+                          [fid->nsfont pointSize],
+                          NULL);
+  Assert (ctfont, @"no CTFontRef for UIFont");
+
+  int utf8_len = 0;
+  char *utf8 = XChar2b_to_utf8 (s, &utf8_len);
+  NSString *nsstr = [NSString stringWithCString:utf8
+                                       encoding:NSUTF8StringEncoding];
+  NSUInteger L = [nsstr length];
+
+  for (int i = 0; i < L; i++) {
+    unichar c = [nsstr characterAtIndex:i];
+    XCharStruct cc;
+    CGGlyph cgglyph = 0;
+
+    if (CTFontGetGlyphsForCharacters (ctfont, &c, &cgglyph, 1))
+      glyph_metrics (ctfont, cgglyph, &cc);
+    else
+      // This is normal, since Latin1 does not encode 0-31 or 127-159.
+      memset (&cc, 0, sizeof(cc));
+
+    if (i == 0) {
+      *cs = cc;
+    } else {
+      cs->ascent   = MAX (cs->ascent,   cc.ascent);
+      cs->descent  = MAX (cs->descent,  cc.descent);
+      cs->lbearing = MIN (cs->lbearing, cs->width + cc.lbearing);
+      cs->rbearing = MAX (cs->rbearing, cs->width + cc.rbearing);
+      cs->width   += cc.width;
+    }
   }
-  CGContextSelectFont (cgc, font->ps_name, font->size, kCGEncodingMacRoman);
-  CGContextSetTextMatrix (cgc, CGAffineTransformIdentity);
+  *dir_ret = 0;
+  *ascent_ret  = f->ascent;
+  *descent_ret = f->descent;
+
+  free (utf8);
+  CFRelease (ctfont);
+
+  return 0;
+}
+
+
+int
+Xutf8TextExtents (XFontSet set, const char *str, int num_bytes,
+                  XRectangle *overall_ink_return,
+                  XRectangle *overall_logical_return)
+{
+  Font fid = set->font;
+  CTFontRef ctfont =
+    CTFontCreateWithName ((CFStringRef) [fid->nsfont fontName],
+                          [fid->nsfont pointSize],
+                          NULL);
+  Assert (ctfont, @"no CTFontRef for UIFont");
+
+  NSString *nsstr = [NSString stringWithCString:str
+                                       encoding:NSUTF8StringEncoding];
+  NSUInteger L = [nsstr length];
+
+  XRectangle ink = { 0, };
+  XRectangle logical = { 0, };
+
+  logical.height = fid->metrics.ascent;
+
+  for (int i = 0; i < L; i++) {
+    unichar c = [nsstr characterAtIndex:i];
+    XCharStruct cs;
+    CGGlyph cgglyph = 0;
+
+    if (CTFontGetGlyphsForCharacters (ctfont, &c, &cgglyph, 1))
+      glyph_metrics (ctfont, cgglyph, &cs);
+    else
+      // This is normal, since Latin1 does not encode 0-31 or 127-159.
+      memset (&cs, 0, sizeof(cs));
+
+    logical.width += cs.width;
+
+    ink.height = MAX(ink.height, cs.ascent);
+    ink.y      = MIN(ink.y,      cs.descent);
+
+    if (i == 0)
+      ink.x = cs.lbearing;
+
+    if (i == L-1) {
+      ink.width += cs.rbearing;
+    } else {
+      ink.width += cs.width;
+    }
+  }
+    
+  CFRelease (ctfont);
+
+  if (overall_ink_return)
+    *overall_ink_return = ink;
+  if (overall_logical_return)
+    *overall_logical_return = logical;
+  return 0;
 }
 
 
 static int
 draw_string (Display *dpy, Drawable d, GC gc, int x, int y,
-             const char  *str, int len, BOOL clear_background_p)
+             NSString *nsstr)
 {
-  if (clear_background_p) {
-    int ascent, descent, dir;
-    XCharStruct cs;
-    XTextExtents (&gc->gcv.font->metrics, str, len,
-                  &dir, &ascent, &descent, &cs);
-    draw_rect (dpy, d, gc,
-               x + MIN (0, cs.lbearing),
-               y - MAX (0, ascent),
-               MAX (MAX (0, cs.rbearing) -
-                    MIN (0, cs.lbearing),
-                    cs.width),
-               MAX (0, ascent) + MAX (0, descent),
-               NO, YES);
-  }
+  if (! nsstr) return 1;
 
   CGRect wr = d->frame;
-
-# if 1
-  /* The Quartz way is probably faster, but doesn't draw Latin1 properly.
-     But the Cocoa way only works on NSView, not on CGContextRef (pixmaps)!
-   */
-
   CGContextRef cgc = d->cgc;
-  push_fg_gc (d, gc, YES);
-  set_font (dpy, cgc, gc);
-
-  CGContextSetTextDrawingMode (cgc, kCGTextFill);
-  if (gc->gcv.antialias_p)
-    CGContextSetShouldAntialias (cgc, YES);
-  CGContextShowTextAtPoint (cgc,
-                            wr.origin.x + x,
-                            wr.origin.y + wr.size.height - y,
-                            str, len);
-  pop_gc (d, gc);
-
-# else /* !0 */
-
-  /* The Cocoa way...
-   */
 
   unsigned long argb = gc->gcv.foreground;
   if (gc->depth == 1) argb = (argb ? WhitePixel(dpy,0) : BlackPixel(dpy,0));
@@ -3221,23 +3279,34 @@ draw_string (Display *dpy, Drawable d, GC gc, int x, int y,
   float g = ((argb >>  8) & 0xFF) / 255.0;
   float b = ((argb      ) & 0xFF) / 255.0;
   NSColor *fg = [NSColor colorWithDeviceRed:r green:g blue:b alpha:a];
+
+  if (!gc->gcv.font) {
+    Assert (0, "no font");
+    return 1;
+  }
+
   NSDictionary *attr =
     [NSDictionary dictionaryWithObjectsAndKeys:
                     gc->gcv.font->nsfont, NSFontAttributeName,
                     fg, NSForegroundColorAttributeName,
                   nil];
-  char *s2 = (char *) malloc (len + 1);
-  strncpy (s2, str, len);
-  s2[len] = 0;
-  NSString *nsstr = [NSString stringWithCString:s2
-                                         encoding:NSISOLatin1StringEncoding];
-  free (s2);
-  NSPoint pos;
-  pos.x = wr.origin.x + x;
-  pos.y = wr.origin.y + wr.size.height - y - gc->gcv.font->metrics.descent;
-  [nsstr drawAtPoint:pos withAttributes:attr];
 
-# endif  /* 0 */
+  // Don't understand why we have to do both set_color and
+  // NSForegroundColorAttributeName, but we do.
+  //
+  set_color (cgc, argb, 32, NO, YES);
+
+  NSAttributedString *astr = [[NSAttributedString alloc]
+                               initWithString:nsstr
+                                   attributes:attr];
+  CTLineRef dl = CTLineCreateWithAttributedString (
+                   (__bridge CFAttributedStringRef) astr);
+  CGContextSetTextPosition (cgc,
+                            wr.origin.x + x,
+                            wr.origin.y + wr.size.height - y);
+  CGContextSetShouldAntialias (cgc, gc->gcv.antialias_p);
+  CTLineDraw (dl, cgc);
+  CFRelease (dl);
 
   invalidate_drawable_cache (d);
   return 0;
@@ -3248,14 +3317,69 @@ int
 XDrawString (Display *dpy, Drawable d, GC gc, int x, int y,
              const char  *str, int len)
 {
-  return draw_string (dpy, d, gc, x, y, str, len, NO);
+  char *s2 = (char *) malloc (len + 1);
+  strncpy (s2, str, len);
+  s2[len] = 0;
+  NSString *nsstr = [NSString stringWithCString:s2
+                                       encoding:NSISOLatin1StringEncoding];
+  int ret = draw_string (dpy, d, gc, x, y, nsstr);
+  free (s2);
+  return ret;
 }
+
+
+int
+XDrawString16 (Display *dpy, Drawable d, GC gc, int x, int y,
+             const XChar2b *str, int len)
+{
+  char *s2 = XChar2b_to_utf8 (str, 0);
+  NSString *nsstr = [NSString stringWithCString:s2
+                                       encoding:NSUTF8StringEncoding];
+  if (! nsstr)
+    /* If the C string has invalid UTF8 bytes in it, the result is
+       "undefined", which turns out to mean "return a null string"
+       instead of just omitting the bogus characters. Greaaat.
+       So try it again as Latin1, I guess. */
+    nsstr = [NSString stringWithCString:s2 encoding:NSISOLatin1StringEncoding];
+  int ret = draw_string (dpy, d, gc, x, y, nsstr);
+  free (s2);
+  return ret;
+}
+
+
+void
+Xutf8DrawString (Display *dpy, Drawable d, XFontSet set, GC gc,
+                 int x, int y, const char *str, int len)
+{
+  char *s2 = (char *) malloc (len + 1);
+  strncpy (s2, str, len);
+  s2[len] = 0;
+  NSString *nsstr = [NSString stringWithCString:s2
+                                       encoding:NSUTF8StringEncoding];
+  if (! nsstr)
+    nsstr = [NSString stringWithCString:s2 encoding:NSISOLatin1StringEncoding];
+  draw_string (dpy, d, gc, x, y, nsstr);
+  free (s2);
+}
+
 
 int
 XDrawImageString (Display *dpy, Drawable d, GC gc, int x, int y,
                   const char *str, int len)
 {
-  return draw_string (dpy, d, gc, x, y, str, len, YES);
+  int ascent, descent, dir;
+  XCharStruct cs;
+  XTextExtents (&gc->gcv.font->metrics, str, len,
+                &dir, &ascent, &descent, &cs);
+  draw_rect (dpy, d, gc,
+             x + MIN (0, cs.lbearing),
+             y - MAX (0, ascent),
+             MAX (MAX (0, cs.rbearing) -
+                  MIN (0, cs.lbearing),
+                  cs.width),
+             MAX (0, ascent) + MAX (0, descent),
+             NO, YES);
+  return XDrawString (dpy, d, gc, x, y, str, len);
 }
 
 
@@ -3392,13 +3516,8 @@ XQueryPointer (Display *dpy, Window w, Window *root_ret, Window *child_ret,
   NSScreen *screen = (screens && [screens count] > 0
                       ? [screens objectAtIndex:0]
                       : [NSScreen mainScreen]);
-#ifdef USE_IPHONE
-  double s = w->window.view.contentScaleFactor;
-#else
-  int s = 1;
-#endif
   NSRect srect = [screen frame];
-  vpos.y = (s * srect.size.height) - vpos.y;
+  vpos.y = srect.size.height - vpos.y;
   
   // get the mouse position on window, from bottom left
   NSEvent *e = [NSApp currentEvent];
@@ -3462,13 +3581,8 @@ XTranslateCoordinates (Display *dpy, Window w, Window dest_w,
   NSScreen *screen = (screens && [screens count] > 0
                       ? [screens objectAtIndex:0]
                       : [NSScreen mainScreen]);
-# ifdef USE_IPHONE
-  double s = w->window.view.contentScaleFactor;
-# else
-  int s = 1;
-# endif
   NSRect srect = [screen frame];
-  vpos.y = (s * srect.size.height) - vpos.y;
+  vpos.y = srect.size.height - vpos.y;
   
   // point starts out relative to top left of view
   NSPoint p;
@@ -3565,6 +3679,18 @@ get_bits_per_pixel (Display *dpy, int depth)
 {
   Assert (depth == 32 || depth == 1, "unexpected depth");
   return depth;
+}
+
+int
+screen_number (Screen *screen)
+{
+  Display *dpy = DisplayOfScreen (screen);
+  int i;
+  for (i = 0; i < ScreenCount (dpy); i++)
+    if (ScreenOfDisplay (dpy, i) == screen)
+      return i;
+  abort ();
+  return 0;
 }
 
 // declared in utils/grabclient.h

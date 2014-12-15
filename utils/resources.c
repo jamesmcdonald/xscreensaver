@@ -1,5 +1,4 @@
-/* xscreensaver, Copyright (c) 1992, 1997, 1998, 2001, 2003, 2006
- *  Jamie Zawinski <jwz@jwz.org>
+/* xscreensaver, Copyright (c) 1992-2014 Jamie Zawinski <jwz@jwz.org>
  *
  * Permission to use, copy, modify, distribute, and sell this software and its
  * documentation for any purpose is hereby granted without fee, provided that
@@ -16,7 +15,7 @@
 extern char *progname;
 
 
-#ifndef HAVE_COCOA
+#if !defined(HAVE_COCOA) && !defined(HAVE_ANDROID)
 
 #include <X11/Xresource.h>
 
@@ -136,10 +135,10 @@ get_float_resource (Display *dpy, char *res_name, char *res_class)
   return 0.0;
 }
 
-#endif /* !HAVE_COCOA */
+#endif /* !HAVE_COCOA && !HAVE_ANDROID */
 
 
-/* These functions are the same with Xlib and Cocoa:
+/* These functions are the same with Xlib, Cocoa and Android:
  */
 
 
@@ -262,4 +261,36 @@ unsigned int
 get_minutes_resource (Display *dpy, char *res_name, char *res_class)
 {
   return get_time_resource (dpy, res_name, res_class, False);
+}
+
+
+/* A utility function for event-handler functions:
+   Returns True if the event is a simple click, Space, Tab, etc.
+   Returns False otherwise.
+   The idea here is that most hacks interpret to clicks or basic
+   keypresses as "change it up".
+
+   This isn't really the right file for this, but whatever.
+ */
+Bool
+screenhack_event_helper (Display *dpy, Window window, XEvent *event)
+{
+  if (event->xany.type == KeyPress)
+    {
+      KeySym keysym;
+      char c = 0;
+      XLookupString (&event->xkey, &c, 1, &keysym, 0);
+      if (c == ' ' || c == '\t' || c == '\r' || c == '\n' ||
+          keysym == XK_Left || keysym == XK_Right ||
+          keysym == XK_Up || keysym == XK_Down ||
+          keysym == XK_Prior || keysym == XK_Next)
+        return True;
+    }
+  else if (event->xany.type == ButtonPress)
+    {
+      if (event->xbutton.button == 1)
+        return True;
+    }
+
+  return False;
 }

@@ -4,6 +4,8 @@
 
   <command arg="-root"/>
 
+  <video href="http://www.youtube.com/watch?v=8BL2o8QJmiA"/>
+
   <number id="delay" type="slider" arg="-delay %"
           _label="Frame rate" _low-label="Low" _high-label="High"
           low="0" high="100000" default="30000"
@@ -33,10 +35,10 @@
   <xscreensaver-updater />
 
   <_description>
-Draws a simple model of an engine that floats around the screen.
+Internal combusion engines.
 
 http://en.wikipedia.org/wiki/Internal_combustion_engine#Operation
 
-Written by Ben Buxton and Ed Beroset; 2001.
+Written by Ben Buxton, Ed Beroset and Jamie Zawinski; 2001.
   </_description>
 </screensaver>

@@ -1,4 +1,4 @@
-/* xscreensaver, Copyright (c) 1992-2008 Jamie Zawinski <jwz@jwz.org>
+/* xscreensaver, Copyright (c) 1992-2014 Jamie Zawinski <jwz@jwz.org>
  *
  * Permission to use, copy, modify, distribute, and sell this software and its
  * documentation for any purpose is hereby granted without fee, provided that
@@ -55,7 +55,7 @@ slidescreen_init (Display *dpy, Window window)
   XGetWindowAttributes (st->dpy, st->window, &xgwa);
   st->img_loader = load_image_async_simple (0, xgwa.screen, st->window,
                                             st->window, 0, 0);
-  st->start_time = time ((time_t) 0);
+  st->start_time = time ((time_t *) 0);
 
   st->max_width = xgwa.width;
   st->max_height = xgwa.height;
@@ -307,19 +307,19 @@ slidescreen_draw (Display *dpy, Window window, void *closure)
     {
       st->img_loader = load_image_async_simple (st->img_loader, 0, 0, 0, 0, 0);
       if (! st->img_loader) {  /* just finished */
-        st->start_time = time ((time_t) 0);
+        st->start_time = time ((time_t *) 0);
         draw_grid (st);
       }
       return st->delay;
     }
 
   if (!st->img_loader &&
-      st->start_time + st->duration < time ((time_t) 0)) {
+      st->start_time + st->duration < time ((time_t *) 0)) {
     XWindowAttributes xgwa;
     XGetWindowAttributes(st->dpy, st->window, &xgwa);
     st->img_loader = load_image_async_simple (0, xgwa.screen, st->window,
                                               st->window, 0, 0);
-    st->start_time = time ((time_t) 0);
+    st->start_time = time ((time_t *) 0);
     st->draw_initted = 0;
     return st->delay;
   }
@@ -433,13 +433,19 @@ slidescreen_reshape (Display *dpy, Window window, void *closure,
     XGetWindowAttributes (st->dpy, st->window, &xgwa);
     st->img_loader = load_image_async_simple (0, xgwa.screen, st->window,
                                               st->window, 0, 0);
-    st->start_time = time ((time_t) 0);
+    st->start_time = time ((time_t *) 0);
   }
 }
 
 static Bool
 slidescreen_event (Display *dpy, Window window, void *closure, XEvent *event)
 {
+  struct state *st = (struct state *) closure;
+  if (screenhack_event_helper (dpy, window, event))
+    {
+      st->start_time = 0;
+      return True;
+    }
   return False;
 }
 
@@ -471,6 +477,7 @@ static const char *slidescreen_defaults [] = {
   "*duration:			120",
 #ifdef USE_IPHONE
   "*ignoreRotation:             True",
+  "*rotateImages:               True",
 #endif
   0
 };

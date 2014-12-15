@@ -4,6 +4,8 @@
 
   <command arg="-root"/>
 
+  <video href="http://www.youtube.com/watch?v=hIqmIQbQkW8"/>
+
   <number id="delay" type="slider" arg="-delay %"
           _label="Frame rate" _low-label="Low" _high-label="High"
           low="0" high="100000" default="20000"
@@ -26,10 +28,9 @@
   <xscreensaver-updater />
 
   <_description>
-This demonstrates a search algorithm designed for locating a source of
-odor in turbulent atmosphere.  The searcher is able to sense the odor
-and determine local instantaneous wind direction.  The goal is to find
-the source in the shortest mean time.
+Searches for a source of odor in a turbulent atmosphere.  The searcher
+is able to sense the odor and determine local instantaneous wind
+direction.  The goal is to find the source in the shortest mean time.
 
 http://en.wikipedia.org/wiki/Anemotaxis
 

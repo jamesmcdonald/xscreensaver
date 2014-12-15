@@ -1,5 +1,5 @@
 #!/usr/bin/perl -w
-# Copyright © 2008-2013 Jamie Zawinski <jwz@jwz.org>
+# Copyright © 2008-2014 Jamie Zawinski <jwz@jwz.org>
 #
 # Permission to use, copy, modify, distribute, and sell this software and its
 # documentation for any purpose is hereby granted without fee, provided that
@@ -19,7 +19,7 @@ use diagnostics;
 use strict;
 
 my $progname = $0; $progname =~ s@.*/@@g;
-my $version = q{ $Revision: 1.7 $ }; $version =~ s/^[^\d]+([\d.]+).*/$1/;
+my ($version) = ('$Revision: 1.12 $' =~ m/\s(\d[.\d]+)\s/s);
 
 my $verbose = 0;
 
@@ -30,7 +30,8 @@ foreach (qw(count cycles delay ncolors size font)) {
 }
 $xlockmore_default_opts .= 
  "{\"-wireframe\", \".wireframe\", XrmoptionNoArg, \"true\"},\n" .
- "{\"-3d\", \".use3d\", XrmoptionNoArg, \"true\"},\n";
+ "{\"-3d\", \".use3d\", XrmoptionNoArg, \"true\"},\n" .
+ "{\"-no-3d\", \".use3d\", XrmoptionNoArg, \"false\"},\n";
 
 my $thread_default_opts = 
   "{\"-threads\",    \".useThreads\", XrmoptionNoArg, \"True\"},\n" .
@@ -62,10 +63,9 @@ sub parse_src($) {
 
   $file = "glx/$file" unless (-f $file);
   my $body = '';
-  local *IN;
-  open (IN, "<$file") || error ("$file: $!");
-  while (<IN>) { $body .= $_; }
-  close IN;
+  open (my $in, '<', $file) || error ("$file: $!");
+  while (<$in>) { $body .= $_; }
+  close $in;
   $file =~ s@^.*/@@;
 
   my $xlockmore_p = 0;
@@ -74,7 +74,7 @@ sub parse_src($) {
 
   $body =~ s@/\*.*?\*/@@gs;
   $body =~ s@^#\s*(if|ifdef|ifndef|elif|else|endif).*$@@gm;
-  $body =~ s/(THREAD|ANALOGTV)_(DEFAULTS|OPTIONS)//gs;
+  $body =~ s/(THREAD|ANALOGTV)_(DEFAULTS|OPTIONS)(_XLOCK)?//gs;
 
   print STDERR "$progname: $file: defaults:\n" if ($verbose > 2);
   my %res_to_val;
@@ -194,6 +194,8 @@ sub parse_xml($$) {
   $body =~ s/</\001</gs;
   $body =~ s/\001(<option)/$1/gs;
 
+  my $video = undef;
+
   print STDERR "$progname: $file: options:\n" if ($verbose > 2);
   foreach (split (m/\001/, $body)) {
     next if (m/^\s*$/s);
@@ -208,6 +210,13 @@ sub parse_xml($$) {
       my $val = "progclass = $name";
       push @result, $val;
       print STDERR "$progname: $file:   name:    $name\n" if ($verbose > 2);
+
+    } elsif ($type eq 'video') {
+      error ("$file: multiple videos") if $video;
+      ($video) = ($args =~ m/\bhref="(.*?)"/);
+      error ("$file: unparsable video") unless $video;
+      error ("$file: unparsable video URL")
+        unless ($video =~ m@^https?://www\.youtube\.com/watch\?v=[^?&]+$@s);
 
     } elsif ($type eq 'number') {
       my ($arg) = ($args =~ m/\barg\s*=\s*\"([^\"]+)\"/);
@@ -276,6 +285,9 @@ sub parse_xml($$) {
       error ("$file: unknown type \"$type\" for no arg");
     }
   }
+
+#  error ("$file: no video") unless $video;
+  print STDERR "\n$file: WARNING: no video\n\n" unless $video;
 
   return @result;
 }

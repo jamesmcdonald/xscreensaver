@@ -1260,7 +1260,9 @@ ENTRYPOINT Bool crackberg_handle_event (ModeInfo *mi, XEvent *ev)
     if (ev->xany.type == KeyPress) {
         switch (keysym) {
             case XK_Left:   cberg->motion_state |= MOTION_LROT;  break;
+            case XK_Prior:  cberg->motion_state |= MOTION_LROT;  break;
             case XK_Right:  cberg->motion_state |= MOTION_RROT;  break;
+            case XK_Next:   cberg->motion_state |= MOTION_RROT;  break;
             case XK_Down:   cberg->motion_state |= MOTION_BACK;  break;
             case XK_Up:     cberg->motion_state |= MOTION_FORW;  break;
             case '1':       cberg->motion_state |= MOTION_DEC;   break; 
@@ -1288,7 +1290,9 @@ ENTRYPOINT Bool crackberg_handle_event (ModeInfo *mi, XEvent *ev)
 
         switch (keysym) {
             case XK_Left:   cberg->motion_state &= ~MOTION_LROT;  break;
+            case XK_Prior:  cberg->motion_state &= ~MOTION_LROT;  break;
             case XK_Right:  cberg->motion_state &= ~MOTION_RROT;  break;
+            case XK_Next:   cberg->motion_state &= ~MOTION_RROT;  break;
             case XK_Down:   cberg->motion_state &= ~MOTION_BACK;  break;
             case XK_Up:     cberg->motion_state &= ~MOTION_FORW;  break;
             case '1':       cberg->motion_state &= ~MOTION_DEC;   break; 
@@ -1330,6 +1334,19 @@ ENTRYPOINT Bool crackberg_handle_event (ModeInfo *mi, XEvent *ev)
       if (dx < 0 && dx < dy) dy = 0;
       if (dy > 0 && dy > dx) dx = 0;
       if (dy < 0 && dy < dx) dx = 0;
+
+      {
+        int rot = current_device_rotation();
+        int swap;
+        while (rot <= -180) rot += 360;
+        while (rot >   180) rot -= 360;
+        if (rot > 135 || rot < -135)		/* 180 */
+            dx = -dx, dy = -dy;
+        else if (rot > 45)			/* 90 */
+          swap = dx, dx = -dy, dy = swap;
+        else if (rot < -45)			/* 270 */
+          swap = dx, dx = dy, dy = -swap;
+      }
 
       if      (dx > 0) cberg->motion_state |= MOTION_LEFT;
       else if (dx < 0) cberg->motion_state |= MOTION_RIGHT;

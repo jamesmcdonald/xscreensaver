@@ -19,7 +19,7 @@
 #include "xlockmoreI.h"
 #include "screenhack.h"
 
-#ifndef HAVE_COCOA
+#if !defined(HAVE_COCOA) && !defined(HAVE_ANDROID)
 # include <X11/Intrinsic.h>
 #endif /* !HAVE_COCOA */
 
@@ -292,17 +292,31 @@ xlockmore_init (Display *dpy, Window window,
   mi->window = window;
   XGetWindowAttributes (dpy, window, &mi->xgwa);
   
-#ifdef HAVE_COCOA
+#if defined(HAVE_COCOA) || defined(HAVE_ANDROID)
   
-  /* In Cocoa-based xscreensaver, all hacks run in the same address space,
-     so each one needs to get its own screen number.  Believe what jwxyz
-     says about screen counts and numbers.
+# if 0
+  /* In Cocoa and Android-based xscreensaver, all hacks run in the
+     same address space, so each one needs to get its own screen
+     number.  Believe what jwxyz says about screen counts and numbers.
    */
   mi->num_screens = ScreenCount (dpy);
   mi->screen_number = XScreenNumberOfScreen (mi->xgwa.screen);
+# else
+  /* No, that doesn't work.
+     The xlockmore docs/HACKERS.GUIDE says that xlock modes are supposed to
+     support repeated calls to init_*() for the same screen in the same
+     session, but in practice, a number of them blow up if you do that.
+     So instead we're stuck with a world where on OSX/iOS, we have to
+     increment the screen number every time the hack is run. Arrgh.
+   */
+  mi->num_screens = 40;
+  mi->screen_number = xlmft->screen_count;
+  if (mi->screen_number >= mi->num_screens) abort();
+  xlmft->screen_count++;
+# endif
   root_p = True;
 
-#else /* !HAVE_COCOA -- real Xlib */
+#else /* real Xlib */
   
   /* In Xlib-based xscreensaver, each hack runs in its own address space,
      so each one only needs to be aware of one screen.

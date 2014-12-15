@@ -1,4 +1,4 @@
-/* tangram, Copyright (c) 2005 Jeremy English <jhe@jeremyenglish.org>
+/* tangram, Copyright (c) 2005-2014 Jeremy English <jhe@jeremyenglish.org>
  *
  * Permission to use, copy, modify, distribute, and sell this software
  * and its documentation for any purpose is hereby granted without
@@ -18,13 +18,12 @@
 
 #define DEFAULTS	"*delay:	10000		 \n" \
 			"*wireframe:    False         \n" \
-			"*titleFont:  -*-helvetica-medium-r-normal-*-180-*\n" \
-			"*titleFont2: -*-helvetica-medium-r-normal-*-120-*\n" \
-			"*titleFont3: -*-helvetica-medium-r-normal-*-80-*\n"  \
+	"*titleFont:  -*-helvetica-medium-r-normal-*-*-180-*-*-*-*-*-*\n" \
+	"*titleFont2: -*-helvetica-medium-r-normal-*-*-120-*-*-*-*-*-*\n" \
+	"*titleFont3: -*-helvetica-medium-r-normal-*-*-80-*-*-*-*-*-*\n"  \
 
 # define refresh_tangram 0
 # define release_tangram 0
-# define tangram_handle_event 0
 #undef countof
 #define countof(x) (sizeof((x))/sizeof((*x)))
 
@@ -38,7 +37,7 @@
 #include <time.h>
 #include <math.h>
 #include "tangram_shapes.h"
-#include "glxfonts.h"
+#include "texfont.h"
 
 typedef struct {
     GLubyte r;
@@ -98,17 +97,7 @@ typedef struct {
     XColor *colors;
     int ccolor;
 
-# ifdef HAVE_GLBITMAP
-    XFontStruct *xfont1;
-    XFontStruct *xfont2;
-    XFontStruct *xfont3;
-    GLuint font1_dlist, font2_dlist, font3_dlist;
-# else
-  texture_font_data *font1_data, *font2_data, *font3_data;
-# endif
-
-    GLuint name_list;
-
+    texture_font_data *font1_data, *font2_data, *font3_data;
     GLfloat theta[3];
     Bool going_down[3];
 
@@ -744,15 +733,9 @@ static void draw_tangram_shape(tangram_shape ts)
 static void load_fonts(ModeInfo * mi)
 {
     tangram_configuration *tp = &tps[MI_SCREEN(mi)];
-# ifdef HAVE_GLBITMAP
-    load_font(mi->dpy, "titleFont", &tp->xfont1, &tp->font1_dlist);
-    load_font(mi->dpy, "titleFont2", &tp->xfont2, &tp->font2_dlist);
-    load_font(mi->dpy, "titleFont3", &tp->xfont3, &tp->font3_dlist);
-# else /* !HAVE_GLBITMAP */
     tp->font1_data = load_texture_font (mi->dpy, "titleFont");
     tp->font2_data = load_texture_font (mi->dpy, "titleFont2");
     tp->font3_data = load_texture_font (mi->dpy, "titleFont3");
-# endif /* !HAVE_GLBITMAP */
 }
 
 static void draw_shapes(ModeInfo * mi)
@@ -767,7 +750,22 @@ static void draw_shapes(ModeInfo * mi)
     draw_tangram_shape(tp->tlg2);
     draw_tangram_shape(tp->sq);
     draw_tangram_shape(tp->rh);
-    if (do_labels) glCallList(tp->name_list);
+
+    if (do_labels)
+      {
+        texture_font_data *f;
+        if (MI_WIDTH(mi) >= 500 && MI_HEIGHT(mi) >= 375)
+            f = tp->font1_data;
+        else if (MI_WIDTH(mi) >= 350 && MI_HEIGHT(mi) >= 260)
+            f = tp->font2_data;
+        else
+            f = tp->font3_data;
+
+        glColor3f(0.8, 0.8, 0);
+        print_texture_label (mi->dpy, f,
+                             mi->xgwa.width, mi->xgwa.height,
+                             1, tp->pn);
+      }
 }
 
 static void set_perspective(void)
@@ -902,8 +900,6 @@ ENTRYPOINT void init_tangram(ModeInfo * mi)
     reshape_tangram (mi, MI_WIDTH(mi), MI_HEIGHT(mi));
 
     wire = MI_IS_WIREFRAME(mi);
-
-    tp->name_list = glGenLists(1);
 
     load_fonts(mi);
     init_shapes(mi);
@@ -1042,43 +1038,6 @@ ENTRYPOINT void draw_tangram(ModeInfo * mi)
     glPushMatrix();
 
     glLoadIdentity();
-    if (do_labels)
-      {
-# ifdef HAVE_GLBITMAP
-        XFontStruct *f;
-        GLuint fl;
-# else /* !HAVE_GLBITMAP */
-        texture_font_data *f;
-# endif /* !HAVE_GLBITMAP */
-        if (MI_WIDTH(mi) >= 500 && MI_HEIGHT(mi) >= 375)
-# ifdef HAVE_GLBITMAP
-            f = tp->xfont1, fl = tp->font1_dlist;
-# else /* !HAVE_GLBITMAP */
-            f = tp->font1_data;
-# endif /* !HAVE_GLBITMAP */
-        else if (MI_WIDTH(mi) >= 350 && MI_HEIGHT(mi) >= 260)
-# ifdef HAVE_GLBITMAP
-            f = tp->xfont2, fl = tp->font2_dlist;
-# else /* !HAVE_GLBITMAP */
-            f = tp->font2_data;
-# endif /* !HAVE_GLBITMAP */
-        else
-# ifdef HAVE_GLBITMAP
-            f = tp->xfont3, fl = tp->font3_dlist;
-# else /* !HAVE_GLBITMAP */
-            f = tp->font3_data;
-# endif /* !HAVE_GLBITMAP */
-
-        glNewList(tp->name_list, GL_COMPILE);
-        glColor3f(0.8, 0.8, 0);
-        print_gl_string(mi->dpy, f,
-# ifdef HAVE_GLBITMAP
-                        fl,
-# endif /* !HAVE_GLBITMAP */
-                        mi->xgwa.width, mi->xgwa.height,
-                        10, mi->xgwa.height - 10, tp->pn, False);
-        glEndList();
-      }
 
     glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, white);
     glMateriali(GL_FRONT_AND_BACK, GL_SHININESS, 128);
@@ -1091,6 +1050,22 @@ ENTRYPOINT void draw_tangram(ModeInfo * mi)
     glPopMatrix();
     glXSwapBuffers(dpy, window);
 }
+
+ENTRYPOINT Bool
+tangram_handle_event (ModeInfo *mi, XEvent *event)
+{
+  tangram_configuration *tp = &tps[MI_SCREEN(mi)];
+
+  if (screenhack_event_helper (MI_DISPLAY(mi), MI_WINDOW(mi), event))
+    {
+      tp->display_counter = 0;
+      return True;
+    }
+
+  return False;
+}
+
+
 
 XSCREENSAVER_MODULE ("Tangram", tangram)
 

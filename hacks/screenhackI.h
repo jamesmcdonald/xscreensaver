@@ -1,4 +1,4 @@
-/* xscreensaver, Copyright (c) 1992-2008 Jamie Zawinski <jwz@jwz.org>
+/* xscreensaver, Copyright (c) 1992-2014 Jamie Zawinski <jwz@jwz.org>
  *
  * Permission to use, copy, modify, distribute, and sell this software and its
  * documentation for any purpose is hereby granted without fee, provided that
@@ -67,9 +67,9 @@
 # include <values.h>
 #endif
 
-#ifdef HAVE_COCOA
+#if defined(HAVE_COCOA) || defined(HAVE_ANDROID)
 # include "jwxyz.h"
-#else  /* !HAVE_COCOA -- real X11 */
+#else  /* real X11 */
 # include <X11/Xlib.h>
 # include <X11/Xutil.h>
 # include <X11/Xresource.h>

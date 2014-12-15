@@ -4,6 +4,8 @@
 
   <command arg="-root"/>
 
+  <video href="http://www.youtube.com/watch?v=AIqz-G0n1JU"/>
+
   <hgroup>
    <vgroup>
     <number id="delay" type="slider" arg="-delay %"
@@ -45,8 +47,7 @@
   <xscreensaver-updater />
 
   <_description>
-Draws a simulation of the Rubik's Snake puzzle.  See also the "Rubik"
-and "Cube21" screen savers.
+The "Rubik's Snake" puzzle.  See also the "Rubik" and "Cube21" screen savers.
 
 http://en.wikipedia.org/wiki/Rubik%27s_Snake
 

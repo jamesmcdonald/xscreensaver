@@ -4,6 +4,8 @@
 
  <command arg="-root"/>
 
+  <video href="http://www.youtube.com/watch?v=G6ZWTrl7pV0"/>
+
  <hgroup>
   <vgroup>
    <number id="delay" type="slider" arg="-delay %"
@@ -36,8 +38,7 @@
   <xscreensaver-updater />
 
   <_description>
-Draws a simulation of an old terminal, with large pixels and
-long-sustain phosphor.
+An old terminal with large pixels and long-sustain phosphor.
 
 On MacOS and Linux, this program is also a fully-functional VT100
 emulator!  Run it as an application instead of as a screen saver and

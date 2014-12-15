@@ -4,6 +4,8 @@
 
   <command arg="-root"/>
 
+  <video href="http://www.youtube.com/watch?v=QcJnc9EKJrI"/>
+
   <hgroup>
    <vgroup>
     <number id="delay" type="slider" arg="-delay %"
@@ -42,7 +44,7 @@
   <xscreensaver-updater />
 
   <_description>
-Draws a series of overlapping, translucent spiral patterns.
+A overlapping, translucent spiral patterns.
 The tightness of their spirals fluctuates in and out.
 
 http://en.wikipedia.org/wiki/Moire_pattern

@@ -36,7 +36,7 @@ static const char sccsid[] = "@(#)sproingies.c	4.04 97/07/28 xlockmore";
 
 #ifdef USE_GL
 
-#ifndef HAVE_COCOA
+#if !defined(HAVE_COCOA) && !defined(HAVE_ANDROID)
 # include <GL/glu.h>
 #endif
 
@@ -551,7 +551,11 @@ RenderSproingie(int t, sp_instance * si)
 		glTranslatef((GLfloat) (thisSproingie->x) + 0.5,
 			     (GLfloat) (thisSproingie->y) + 0.5,
 			     (GLfloat) (thisSproingie->z) - 0.5);
-		scale = (GLfloat) (1 << (thisSproingie->frame - BOOM_FRAME));
+		{
+			int boom_scale = thisSproingie->frame - BOOM_FRAME;
+			if (boom_scale >= 31) boom_scale = 31;
+			scale = (GLfloat) (1 << boom_scale);
+		}
 		glScalef(scale, scale, scale);
 		if (!si->wireframe) {
 			if (!si->mono)

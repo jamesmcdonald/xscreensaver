@@ -1,4 +1,4 @@
-/* xscreensaver, Copyright (c) 2006-2013 Jamie Zawinski <jwz@jwz.org>
+/* xscreensaver, Copyright (c) 2006-2014 Jamie Zawinski <jwz@jwz.org>
  *
  * Permission to use, copy, modify, distribute, and sell this software and its
  * documentation for any purpose is hereby granted without fee, provided that
@@ -38,14 +38,93 @@
 #ifdef USE_IPHONE
 
 @interface RotateyViewController : UINavigationController
+{
+  BOOL allowRotation;
+}
 @end
 
 @implementation RotateyViewController
+
+/* This subclass exists so that we can ask that the SaverListController and
+   preferences panels be auto-rotated by the system.  Note that the 
+   XScreenSaverView is not auto-rotated because it is on a different UIWindow.
+ */
+
+- (id)initWithRotation:(BOOL)rotatep
+{
+  self = [super init];
+  allowRotation = rotatep;
+  return self;
+}
+
 - (BOOL)shouldAutorotateToInterfaceOrientation: (UIInterfaceOrientation)o
 {
-  return YES;
+  return allowRotation;				/* Deprecated in iOS 6 */
 }
+
+- (BOOL)shouldAutorotate			/* Added in iOS 6 */
+{
+  return allowRotation;
+}
+
+- (NSUInteger)supportedInterfaceOrientations	/* Added in iOS 6 */
+{
+  return UIInterfaceOrientationMaskAll;
+}
+
 @end
+
+
+/* This subclass exists to ensure that all events on the saverWindow actually
+   go to the saverView.  For some reason, the rootViewController's
+   UILayoutContainerView was capturing all of our events (touches and shakes).
+ */
+
+@interface EventCapturingWindow : UIWindow
+@property(assign) UIView *eventView;
+@end
+
+@implementation EventCapturingWindow
+@synthesize eventView;
+
+/* Always deliver touch events to the eventView if we have one.
+ */
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event
+{
+  if (eventView)
+    return eventView;
+  else
+    return [super hitTest:point withEvent:event];
+}
+
+/* Always deliver motion events to the eventView if we have one.
+ */
+- (void)motionBegan:(UIEventSubtype)motion withEvent:(UIEvent *)event
+{
+  if (eventView)
+    [eventView motionBegan:motion withEvent:event];
+  else
+    [super motionBegan:motion withEvent:event];
+}
+
+- (void)motionEnded:(UIEventSubtype)motion withEvent:(UIEvent *)event
+{
+  if (eventView)
+    [eventView motionEnded:motion withEvent:event];
+  else
+    [super motionEnded:motion withEvent:event];
+}
+
+- (void)motionCancelled:(UIEventSubtype)motion withEvent:(UIEvent *)event
+{
+  if (eventView)
+    [eventView motionCancelled:motion withEvent:event];
+  else
+    [super motionCancelled:motion withEvent:event];
+}
+
+@end
+
 
 #endif // USE_IPHONE
 
@@ -354,7 +433,7 @@ relabel_menus (NSObject *v, NSString *old_str, NSString *new_str)
   [prefs setObject:saver forKey:@"selectedSaverName"];
   [prefs synchronize];
 
-  [rootViewController pushViewController: [saverView configureView]
+  [rotating_nav pushViewController: [saverView configureView]
                       animated:YES];
 }
 
@@ -422,23 +501,16 @@ relabel_menus (NSObject *v, NSString *old_str, NSString *new_str)
   [prefs setObject:name forKey:@"selectedSaverName"];
   [prefs synchronize];
 
+/* Cacheing this screws up rotation when starting a saver twice in a row.
   if (saverName && [saverName isEqualToString: name]) {
     if ([saverView isAnimating])
       return;
     else
       goto LAUNCH;
   }
+*/
 
   saverName = name;
-
-  if (! backgroundView) {
-    // This view is the parent of the XScreenSaverView, and exists only
-    // so that there is a black background behind it.  Without this, when
-    // rotation is in progress, the scrolling-list window's corners show
-    // through in the corners.
-    backgroundView = [[[NSView class] alloc] initWithFrame:[window frame]];
-    [backgroundView setBackgroundColor:[NSColor blackColor]];
-  }
 
   if (saverView) {
     if ([saverView isAnimating])
@@ -449,8 +521,119 @@ relabel_menus (NSObject *v, NSString *old_str, NSString *new_str)
     [saverView release];
   }
 
-  NSSize size = [window frame].size;
-  saverView = [self makeSaverView:name withSize: size];
+  UIScreen *screen = [UIScreen mainScreen];
+  NSSize size;
+  double scale;
+
+# ifndef __IPHONE_8_0				// iOS 7 SDK or earlier
+
+  size = [screen bounds].size;  		//  points, not pixels
+  scale = [screen scale];			//  available in iOS 4
+
+# else						// iOS 8 SDK or later
+
+  if ([screen respondsToSelector:@selector(nativeBounds)]) {
+    size = [screen nativeBounds].size;		//  available in iOS 8
+    scale = 1;  // nativeBounds is in pixels.
+
+    /* 'nativeScale' is very confusing.
+
+       iPhone 4s:
+          bounds:        320x480   scale:        2
+          nativeBounds:  640x960   nativeScale:  2
+       iPhone 5s:
+          bounds:        320x568   scale:        2
+          nativeBounds:  640x1136  nativeScale:  2
+       iPad 2:
+          bounds:       768x1024   scale:        1
+          nativeBounds: 768x1024   nativeScale:  1
+       iPad Retina/Air:
+          bounds:       768x1024   scale:        2
+          nativeBounds: 1536x2048  nativeScale:  2
+       iPhone 6:
+          bounds:        320x568   scale:        2
+          nativeBounds:  640x1136  nativeScale:  2
+       iPhone 6+:
+          bounds:        320x568   scale:        2
+          nativeBounds:  960x1704  nativeScale:  3
+
+       According to a StackOverflow comment:
+
+         The iPhone 6+ renders internally using @3x assets at a virtual
+         resolution of 2208x1242 (with 736x414 points), then samples that down
+         for display. The same as using a scaled resolution on a Retina MacBook
+         -- it lets them hit an integral multiple for pixel assets while still
+         having e.g. 12pt text look the same size on the screen.
+
+         The 6, the 5s, the 5, the 4s and the 4 are all 326 pixels per inch,
+         and use @2x assets to stick to the approximately 160 points per inch
+         of all previous devices.
+
+         The 6+ is 401 pixels per inch. So it'd hypothetically need roughly
+         @2.46x assets. Instead Apple uses @3x assets and scales the complete
+         output down to about 84% of its natural size.
+
+         In practice Apple has decided to go with more like 87%, turning the
+         1080 into 1242. No doubt that was to find something as close as
+         possible to 84% that still produced integral sizes in both directions
+         -- 1242/1080 = 2208/1920 exactly, whereas if you'd turned the 1080
+         into, say, 1286, you'd somehow need to render 2286.22 pixels
+         vertically to scale well.
+     */
+
+  } else {
+    size = [screen bounds].size;		//  points, not pixels
+    scale = [screen scale];			//  available in iOS 4
+  }
+# endif  // iOS 8
+
+  size.width  = ceilf (size.width  / scale);
+  size.height = ceilf (size.height / scale);
+
+
+# if TARGET_IPHONE_SIMULATOR
+  NSLog(@"screen: %.0fx%0.f",
+        [[screen currentMode] size].width,
+        [[screen currentMode] size].height);
+  NSLog(@"bounds: %.0fx%0.f x %.1f = %.0fx%0.f",
+        [screen bounds].size.width,
+        [screen bounds].size.height,
+        [screen scale],
+        [screen scale] * [screen bounds].size.width,
+        [screen scale] * [screen bounds].size.height);
+
+#  ifdef __IPHONE_8_0
+  if ([screen respondsToSelector:@selector(nativeBounds)])
+    NSLog(@"native: %.0fx%0.f / %.1f = %.0fx%0.f",
+          [screen nativeBounds].size.width,
+          [screen nativeBounds].size.height,
+          [screen nativeScale],
+          [screen nativeBounds].size.width  / [screen nativeScale],
+          [screen nativeBounds].size.height / [screen nativeScale]);
+#  endif
+
+
+  /* Our view must be full screen, and view sizes are measured in points,
+     not pixels.  However, since our view is on a UINavigationController
+     that does not rotate, the size must be portrait-mode even if the
+     device is landscape.
+
+     On iOS 7, [screen bounds] always returned portrait-mode values.
+     On iOS 8, it rotates.  So swap as necessary.
+     On iOS 8, [screen nativeBounds] is unrotated, in pixels not points.
+   */
+  size = [screen bounds].size;
+  if (size.width > size.height) {
+    double s = size.width;
+    size.width = size.height;
+    size.height = s;
+  }
+
+  NSLog(@"saverView: %.0fx%.0f", size.width, size.height);
+# endif // TARGET_IPHONE_SIMULATOR
+
+
+  saverView = [self makeSaverView:name withSize:size];
 
   if (! saverView) {
     [[[UIAlertView alloc] initWithTitle: name
@@ -462,20 +645,49 @@ relabel_menus (NSObject *v, NSString *old_str, NSString *new_str)
     return;
   }
 
-  [saverView setFrame: [window frame]];
   [[NSNotificationCenter defaultCenter]
     addObserver:saverView
     selector:@selector(didRotate:)
     name:UIDeviceOrientationDidChangeNotification object:nil];
 
- LAUNCH:
+  /* LAUNCH: */
+
   if (launch) {
     [self saveScreenshot];
-    [window addSubview: backgroundView];
+    NSRect f;
+    f.origin.x = 0;
+    f.origin.y = 0;
+    f.size = [[UIScreen mainScreen] bounds].size;
+    if (f.size.width > f.size.height) {  // Force portrait
+      double swap = f.size.width;
+      f.size.width = f.size.height;
+      f.size.height = swap;
+    }
+    [backgroundView setFrame:f];
+    [saverView setFrame:f];
+    [saverWindow addSubview: backgroundView];
     [backgroundView addSubview: saverView];
-    [saverView becomeFirstResponder];
+    [saverWindow setFrame:f];
+    [saverView setBackgroundColor:[NSColor blackColor]];
+
+    [saverWindow setHidden:NO];
+    [saverWindow makeKeyAndVisible];
     [saverView startAnimation];
     [self aboutPanel:nil];
+
+    // Tell the UILayoutContainerView to stop intercepting our events.
+    //    [[saverWindow rootViewController] view].userInteractionEnabled = NO;
+    //    saverView.userInteractionEnabled = YES;
+
+    // Tell the saverWindow that all events should go to saverView.
+    //
+    NSAssert ([saverWindow isKindOfClass:[EventCapturingWindow class]],
+              @"saverWindow is not an EventCapturingWindow");
+    ((EventCapturingWindow *) saverWindow).eventView = saverView;
+
+    // Doing this makes savers cut back to the list instead of fading,
+    // even though [XScreenSaverView stopAndClose] does setHidden:NO first.
+    // [window setHidden:YES];
   }
 # endif // USE_IPHONE
 }
@@ -521,15 +733,36 @@ relabel_menus (NSObject *v, NSString *old_str, NSString *new_str)
   CGFloat pt2 = 14;
   UIFont *font1 = [UIFont boldSystemFontOfSize:  pt1];
   UIFont *font2 = [UIFont italicSystemFontOfSize:pt2];
+
+# ifdef __IPHONE_7_0
+  CGSize s = CGSizeMake(frame.size.width, frame.size.height);
+  CGSize tsize1 = [[[NSAttributedString alloc]
+                     initWithString: name
+                     attributes:@{ NSFontAttributeName: font1 }]
+                    boundingRectWithSize: s
+                    options: NSStringDrawingUsesLineFragmentOrigin
+                    context: nil].size;
+  CGSize tsize2 = [[[NSAttributedString alloc]
+                     initWithString: name
+                     attributes:@{ NSFontAttributeName: font2 }]
+                    boundingRectWithSize: s
+                    options: NSStringDrawingUsesLineFragmentOrigin
+                    context: nil].size;
+# else // iOS 6 or Cocoa
   CGSize tsize1 = [name sizeWithFont:font1
                    constrainedToSize:CGSizeMake(frame.size.width,
                                                 frame.size.height)];
   CGSize tsize2 = [year sizeWithFont:font2
                    constrainedToSize:CGSizeMake(frame.size.width,
                                                 frame.size.height)];
+#endif
+
   CGSize tsize = CGSizeMake (tsize1.width > tsize2.width ?
                              tsize1.width : tsize2.width,
                              tsize1.height + tsize2.height);
+
+  tsize.width  = ceilf(tsize.width);
+  tsize.height = ceilf(tsize.height);
 
   // Don't know how to find inner margin of UITextView.
   CGFloat margin = 10;
@@ -541,10 +774,7 @@ relabel_menus (NSObject *v, NSString *old_str, NSString *new_str)
 
   frame = CGRectMake (0, 0, tsize.width, tsize.height);
 
-  UIInterfaceOrientation orient =
-    // Why are both of these wrong when starting up rotated??
-    [[UIDevice currentDevice] orientation];
-    // [rootViewController interfaceOrientation];
+  UIInterfaceOrientation orient = [rotating_nav interfaceOrientation];
 
   /* Get the text oriented properly, and move it to the bottom of the
      screen, since many savers have action in the middle.
@@ -604,7 +834,7 @@ relabel_menus (NSObject *v, NSString *old_str, NSString *new_str)
       textview = [[UITextView alloc] initWithFrame:frame];
       textview.font = (j == 0 ? font1 : font2);
       textview.text = (j == 0 ? name  : year);
-      textview.textAlignment = UITextAlignmentCenter;
+      textview.textAlignment = NSTextAlignmentCenter;
       textview.showsHorizontalScrollIndicator = NO;
       textview.showsVerticalScrollIndicator   = NO;
       textview.scrollEnabled = NO;
@@ -881,14 +1111,23 @@ relabel_menus (NSObject *v, NSString *old_str, NSString *new_str)
   }
 
   // Delete everything after the first blank line.
+  //
   r = [desc rangeOfString:@"\n\n" options:0];
   if (r.length > 0)
     desc = [desc substringToIndex: r.location];
 
-  // Truncate really long ones.
-  int max = 140;
-  if ([desc length] > max)
-    desc = [desc substringToIndex: max];
+  // Unwrap lines and compress whitespace.
+  {
+    NSString *result = @"";
+    for (NSString *s in [desc componentsSeparatedByCharactersInSet:
+                          [NSCharacterSet whitespaceAndNewlineCharacterSet]]) {
+      if ([result length] == 0)
+        result = s;
+      else if ([s length] > 0)
+        result = [NSString stringWithFormat: @"%@ %@", result, s];
+      desc = result;
+    }
+  }
 
   if (year)
     desc = [year stringByAppendingString:
@@ -1112,22 +1351,62 @@ FAIL:
 # undef ya_rand_init
   ya_rand_init (0);	// Now's a good time.
 
-  rootViewController = [[[RotateyViewController alloc] init] retain];
-  [window setRootViewController: rootViewController];
-
-  SaverListController *menu = [[SaverListController alloc] 
-                                initWithNames:saverNames
-                                descriptions:[self makeDescTable]];
-  [rootViewController pushViewController:menu animated:YES];
-  [menu becomeFirstResponder];
-
-  [window makeKeyAndVisible];
+  rotating_nav = [[[RotateyViewController alloc] initWithRotation:YES]
+                         retain];
+  [window setRootViewController: rotating_nav];
   [window setAutoresizesSubviews:YES];
   [window setAutoresizingMask: 
             (UIViewAutoresizingFlexibleWidth | 
              UIViewAutoresizingFlexibleHeight)];
 
+  nonrotating_nav = [[[RotateyViewController alloc] initWithRotation:NO]
+                          retain];
+  [nonrotating_nav setNavigationBarHidden:YES animated:NO];
+
+  /* We run the saver on a different UIWindow than the one the
+     SaverListController and preferences panels run on, because that's
+     the only way to make rotation work right.  We want the system to
+     handle rotation of the UI stuff, but we want it to keep its hands
+     off of rotation of the savers.  As of iOS 8, this seems to be the
+     only way to accomplish that.
+
+     Also, we need to create saverWindow with a portrait rectangle, always.
+     Note that [UIScreen bounds] returns rotated and scaled values.
+  */
+  UIScreen *screen = [UIScreen mainScreen];
+# ifndef __IPHONE_8_0				// iOS 7 SDK
+  NSRect frame = [screen bounds];
+  int ss = [screen scale];
+# else						// iOS 8 SDK
+  NSRect frame = ([screen respondsToSelector:@selector(nativeBounds)]
+                 ? [screen nativeBounds]	//   iOS 8
+                 : [screen bounds]);		//   iOS 7
+  int ss = ([screen respondsToSelector:@selector(nativeScale)]
+            ? [screen nativeScale]		//   iOS 8
+            : [screen scale]);			//   iOS 7
+# endif						// iOS 8 SDK
+  frame.size.width  /= ss;
+  frame.size.height /= ss;
+  saverWindow = [[EventCapturingWindow alloc] initWithFrame:frame];
+  [saverWindow setRootViewController: nonrotating_nav];
+  [saverWindow setHidden:YES];
+
+  /* This view is the parent of the XScreenSaverView, and exists only
+     so that there is a black background behind it.  Without this, when
+     rotation is in progress, the scrolling-list window's corners show
+     through in the corners.
+  */
+  backgroundView = [[[NSView class] alloc] initWithFrame:[saverWindow frame]];
+  [backgroundView setBackgroundColor:[NSColor blackColor]];
+
+  SaverListController *menu = [[SaverListController alloc] 
+                                initWithNames:saverNames
+                                descriptions:[self makeDescTable]];
+  [rotating_nav pushViewController:menu animated:YES];
+  [menu becomeFirstResponder];
+
   application.applicationSupportsShakeToEdit = YES;
+
 
 # endif // USE_IPHONE
 
@@ -1183,6 +1462,12 @@ FAIL:
 # endif
 
   [self selectedSaverDidChange:nil];
+//  [NSTimer scheduledTimerWithTimeInterval: 0
+//           target:self
+//           selector:@selector(selectedSaverDidChange:)
+//           userInfo:nil
+//           repeats:NO];
+
 
 
 # ifndef USE_IPHONE

@@ -4,6 +4,8 @@
 
   <command arg="-root"/>
 
+  <video href="http://www.youtube.com/watch?v=spQRFDmDMeg"/>
+
   <number id="delay" type="slider" arg="-delay %"
           _label="Frame rate" _low-label="Low" _high-label="High"
           low="0" high="100000" default="10000"
@@ -26,8 +28,8 @@
   <xscreensaver-updater />
 
   <_description>
-This draws a simple orbital simulation.  With trails enabled,
-it looks kind of like a cloud-chamber photograph.
+An orbital simulation.  With trails enabled, it looks kind of like a
+cloud-chamber photograph.
 
 Written by Greg Bowering; 1997.
   </_description>

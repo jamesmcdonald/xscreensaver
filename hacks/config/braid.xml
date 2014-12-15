@@ -4,6 +4,8 @@
 
   <command arg="-root"/>
 
+  <video href="http://www.youtube.com/watch?v=PUhJq56ViGM"/>
+
   <number id="delay" type="slider" arg="-delay %"
           _label="Frame rate" _low-label="Low" _high-label="High"
           low="0" high="100000" default="1000"
@@ -30,7 +32,7 @@
   <xscreensaver-updater />
 
   <_description>
-Draws random color-cycling inter-braided concentric circles.
+Inter-braided concentric circles.
 
 Written by John Neil; 1997.
   </_description>

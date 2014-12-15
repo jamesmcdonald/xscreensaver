@@ -4,6 +4,8 @@
 
   <command arg="-root"/>
 
+  <video href="http://www.youtube.com/watch?v=vcB-6S7Hfuk"/>
+
   <hgroup>
    <vgroup>
     <number id="delay" type="slider" arg="-delay %"
@@ -46,8 +48,7 @@
   <xscreensaver-updater />
 
   <_description>
-Draws successive pages of text.  The lines flip in and out in
-a soothing 3D pattern.
+Successive pages of text flip in and out in a soothing 3D pattern.
 
 Written by Jamie Zawinski; 2005.
   </_description>

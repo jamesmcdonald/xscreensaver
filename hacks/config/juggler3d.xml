@@ -3,6 +3,8 @@
 <screensaver name="juggler3d" _label="Juggler3D" gl="yes">
   <command arg="-root"/>
 
+  <video href="http://www.youtube.com/watch?v=TJkKaXBOvCA"/>
+
   <hgroup>
    <vgroup>
     <number id="delay" type="slider" arg="-delay %"
@@ -43,7 +45,7 @@
   <xscreensaver-updater />
 
   <_description>
-Draws a 3D juggling stick-man, with Cambridge juggling pattern
+A 3D juggling stick-man, with Cambridge juggling pattern
 notation used to describe the patterns he juggles.
 
 http://en.wikipedia.org/wiki/Siteswap

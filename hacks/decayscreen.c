@@ -1,4 +1,4 @@
-/* xscreensaver, Copyright (c) 1992-2013 Jamie Zawinski <jwz@jwz.org>
+/* xscreensaver, Copyright (c) 1992-2014 Jamie Zawinski <jwz@jwz.org>
  *
  * Permission to use, copy, modify, distribute, and sell this software and its
  * documentation for any purpose is hereby granted without fee, provided that
@@ -140,7 +140,7 @@ decayscreen_init (Display *dpy, Window window)
     gcflags |= GCSubwindowMode;
   st->gc = XCreateGC (st->dpy, st->window, gcflags, &gcv);
 
-  st->start_time = time ((time_t) 0);
+  st->start_time = time ((time_t *) 0);
   decayscreen_load_image (st);
 
   return st;
@@ -177,7 +177,7 @@ decayscreen_draw (Display *dpy, Window window, void *closure)
                                                   0, 0, 0, 0, 0);
         if (! st->img_loader) {  /* just finished */
 
-          st->start_time = time ((time_t) 0);
+          st->start_time = time ((time_t *) 0);
           if (st->random_p)
             st->mode = random() % (FUZZ+1);
 
@@ -199,7 +199,7 @@ decayscreen_draw (Display *dpy, Window window, void *closure)
     }
 
     if (!st->img_loader &&
-        st->start_time + st->duration < time ((time_t) 0)) {
+        st->start_time + st->duration < time ((time_t *) 0)) {
       decayscreen_load_image (st);
     }
 
@@ -341,6 +341,12 @@ decayscreen_reshape (Display *dpy, Window window, void *closure,
 static Bool
 decayscreen_event (Display *dpy, Window window, void *closure, XEvent *event)
 {
+  struct state *st = (struct state *) closure;
+  if (screenhack_event_helper (dpy, window, event))
+    {
+      st->start_time = 0;
+      return True;
+    }
   return False;
 }
 
@@ -368,6 +374,7 @@ static const char *decayscreen_defaults [] = {
   "*duration:			120",
 #ifdef USE_IPHONE
   "*ignoreRotation:             True",
+  "*rotateImages:               True",
 #endif
   0
 };

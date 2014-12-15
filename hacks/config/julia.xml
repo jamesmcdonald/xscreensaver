@@ -4,6 +4,8 @@
 
   <command arg="-root"/>
 
+  <video href="http://www.youtube.com/watch?v=cA4Rgq-rmy8"/>
+
   <number id="delay" type="slider" arg="-delay %"
           _label="Frame rate" _low-label="Low" _high-label="High"
           low="0" high="100000" default="10000"
@@ -26,7 +28,7 @@
   <xscreensaver-updater />
 
   <_description>
-Animates the Julia set (a close relative of the Mandelbrot set).  The
+The Julia set is a close relative of the Mandelbrot set.  The
 small moving dot indicates the control point from which the rest of
 the image was generated.  See also the "Discrete" screen saver.
 

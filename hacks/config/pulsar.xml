@@ -4,6 +4,8 @@
 
   <command arg="-root"/>
 
+  <video href="http://www.youtube.com/watch?v=pR0lpvOAbUo"/>
+
   <number id="delay" type="slider" arg="-delay %"
           _label="Frame rate" _low-label="Low" _high-label="High"
           low="0" high="100000" default="10000"
@@ -33,8 +35,7 @@
   <xscreensaver-updater />
 
   <_description>
-Draws some intersecting planes, making use of alpha blending, fog,
-textures, and mipmaps.
+Intersecting planes, with alpha blending, fog, textures, and mipmaps.
 
 Written by David Konerding; 1999.
   </_description>

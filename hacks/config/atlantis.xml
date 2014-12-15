@@ -4,6 +4,8 @@
 
   <command arg="-root"/>
 
+  <video href="http://www.youtube.com/watch?v=U78xPez5UGg"/>
+
   <number id="sharkspeed" type="slider" arg="-delay %"
           _label="Frame rate" _low-label="Low" _high-label="High"
           low="0" high="100000" default="25000"
@@ -41,7 +43,7 @@
   <xscreensaver-updater />
 
   <_description>
-A 3D animation of a number of sharks, dolphins, and whales.
+Sharks, dolphins and whales.
 
 Written by Mark Kilgard; 1998.
   </_description>

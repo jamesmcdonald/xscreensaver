@@ -1,4 +1,4 @@
-/* xscreensaver, Copyright (c) 1992-2013 Jamie Zawinski <jwz@jwz.org>
+/* xscreensaver, Copyright (c) 1992-2014 Jamie Zawinski <jwz@jwz.org>
  *
  * Permission to use, copy, modify, distribute, and sell this software and its
  * documentation for any purpose is hereby granted without fee, provided that
@@ -527,26 +527,48 @@ struct pipe_closure {
 
 # ifndef USE_IPHONE
 
+# define BACKSLASH(c) \
+  (! ((c >= 'a' && c <= 'z') || \
+      (c >= 'A' && c <= 'Z') || \
+      (c >= '0' && c <= '9') || \
+      c == '.' || c == '_' || c == '-' || c == '+' || c == '/'))
+
 /* Gets the name of an image file to load by running xscreensaver-getimage-file
    at the end of a pipe.  This can be very slow!
  */
 static FILE *
 open_image_name_pipe (const char *dir)
 {
-  char *cmd = malloc (strlen(dir) * 2 + 100);
   char *s;
-  strcpy (cmd, "xscreensaver-getimage-file --name ");
-  s = cmd + strlen (cmd);
-  while (*dir) {
-    char c = *dir++;
-    /* put a backslash in front of any character that might confuse sh. */
-    if (! ((c >= 'a' && c <= 'z') ||
-           (c >= 'A' && c <= 'Z') ||
-           (c >= '0' && c <= '9') ||
-           c == '.' || c == '_' || c == '-' || c == '+' || c == '/'))
-      *s++ = '\\';
+
+# ifdef HAVE_COCOA
+  /* /bin/sh on OS X 10.10 wipes out the PATH. */
+  const char *path = getenv("PATH");
+  char *cmd = s = malloc ((strlen(dir) + strlen(path)) * 2 + 100);
+  strcpy (s, "/bin/sh -c 'export PATH=");
+  s += strlen (s);
+  while (*path) {
+    char c = *path++;
+    if (BACKSLASH(c)) *s++ = '\\';
     *s++ = c;
   }
+  strcpy (s, "; ");
+  s += strlen (s);
+# else
+  char *cmd = s = malloc (strlen(dir) * 2 + 100);
+# endif
+
+  strcpy (s, "xscreensaver-getimage-file --name ");
+  s += strlen (s);
+  while (*dir) {
+    char c = *dir++;
+    if (BACKSLASH(c)) *s++ = '\\';
+    *s++ = c;
+  }
+# ifdef HAVE_COCOA
+  strcpy (s, "'");
+  s += strlen (s);
+# endif
   *s = 0;
 
   FILE *pipe = popen (cmd, "r");
@@ -648,27 +670,40 @@ pipe_cb (XtPointer closure, int *source, XtInputId *id)
    image from the iOS device's Photo Library.  See iosgrabimage.m.
  */
 static void
-ios_load_random_image_cb (void *uiimage, const char *filename, void *closure)
+ios_load_random_image_cb (void *uiimage, const char *filename, 
+                          int width, int height, void *closure)
 {
   struct pipe_closure *clo2 = (struct pipe_closure *) closure;
   Display *dpy = DisplayOfScreen (clo2->screen);
   XRectangle geom;
+  XWindowAttributes xgwa;
+  Window r;
+  int x, y;
+  unsigned int w, h, bbw, d;
+  int rot = 0;
+
+  XGetWindowAttributes (dpy, clo2->xwindow, &xgwa);
+  XGetGeometry (dpy, clo2->drawable, &r, &x, &y, &w, &h, &bbw, &d);
+
+  /* If the image is portrait and the window is landscape, or vice versa,
+     rotate the image. The idea is to fill up as many pixels as possible,
+     and assume the user will just rotate their phone until it looks right.
+     This makes "decayscreen", etc. much more easily viewable.
+   */
+  if (get_boolean_resource (dpy, "rotateImages", "RotateImages")) {
+    if ((width > height) != (w > h))
+      rot = 5;
+  }
 
   if (uiimage)
     {
       jwxyz_draw_NSImage_or_CGImage (DisplayOfScreen (clo2->screen), 
                                      clo2->drawable,
                                      True, uiimage, &geom,
-                                     0);
+                                     rot);
     }
   else  /* Probably means no images in the gallery. */
     {
-      XWindowAttributes xgwa;
-      Window r;
-      int x, y;
-      unsigned int w, h, bbw, d;
-      XGetWindowAttributes (dpy, clo2->xwindow, &xgwa);
-      XGetGeometry (dpy, clo2->drawable, &r, &x, &y, &w, &h, &bbw, &d);
       draw_colorbars (clo2->screen, xgwa.visual, clo2->drawable, xgwa.colormap,
                       0, 0, w, h);
       geom.x = geom.y = 0;

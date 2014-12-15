@@ -4,6 +4,8 @@
 
   <command arg="-root"/>
 
+  <video href="http://www.youtube.com/watch?v=GZe5rk_7TnA"/>
+
   <number id="start" type="slider" arg="-start %"
           _label="Start sequence time" _low-label="0 sec" _high-label="30 sec"
           low="0.00" high="27.79" default="0.00"/>
@@ -33,7 +35,7 @@
   <xscreensaver-updater />
 
   <_description>
-Draws an animation similar to the opening and closing effects on the
+An animation similar to the opening and closing effects on the
 Dr. Who TV show.
 
 Written by Sean P. Brennan; 2005.

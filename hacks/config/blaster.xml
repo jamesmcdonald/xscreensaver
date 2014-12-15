@@ -4,6 +4,8 @@
 
   <command arg="-root"/>
 
+  <video href="http://www.youtube.com/watch?v=bp3J3si2Hr0"/>
+
   <number id="delay" type="slider" arg="-delay %"
           _label="Frame rate" _low-label="Low" _high-label="High"
           low="0" high="100000" default="10000"
@@ -53,8 +55,8 @@
   <xscreensaver-updater />
 
   <_description>
-Draws a simulation of flying space-combat robots (cleverly disguised
-as colored circles) doing battle in front of a moving star field.
+Flying space-combat robots (cleverly disguised as colored circles)
+do battle in front of a moving star field.
 
 Written by Jonathan Lin; 1999.
   </_description>

@@ -4,6 +4,8 @@
 
   <command arg="-root"/>
 
+  <video href="http://www.youtube.com/watch?v=Cev034v37JM"/>
+
   <number id="delay" type="slider" arg="-delay %"
           _label="Frame rate" _low-label="Low" _high-label="High"
           low="0" high="100000" default="30000"
@@ -26,7 +28,7 @@
   <xscreensaver-updater />
 
   <_description>
-Draws what looks like a waving ribbon following a sinusoidal path.
+A waving ribbon follows a sinusoidal path.
 
 Written by Bas van Gaalen and Charles Vidal; 1997.
   </_description>

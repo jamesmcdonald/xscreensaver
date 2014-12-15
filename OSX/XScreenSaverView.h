@@ -1,4 +1,4 @@
-/* xscreensaver, Copyright (c) 2006-2013 Jamie Zawinski <jwz@jwz.org>
+/* xscreensaver, Copyright (c) 2006-2014 Jamie Zawinski <jwz@jwz.org>
  *
  * Permission to use, copy, modify, distribute, and sell this software and its
  * documentation for any purpose is hereby granted without fee, provided that
@@ -79,20 +79,19 @@
 
 # ifdef USE_IPHONE
   UIDeviceOrientation orientation, new_orientation;
-  double tap_time;
-  CGPoint tap_point;
   BOOL screenLocked;
 
-  CGSize initial_bounds;
+  CGSize initial_bounds;	// portrait-mode size (pixels, not points).
 	
-  GLfloat rotation_ratio;	// ratio thru rotation anim, or -1
-  NSSize rot_from, rot_to;	// start size rect, end size rect
-  GLfloat angle_from, angle_to;	// start angle, end angle
+  GLfloat rotation_ratio;	// ratio [0-1] thru rotation anim, or -1
+  NSSize rot_current_size;	// intermediate or at-rest orientation.
+  NSSize rot_from, rot_to;	// start/end size rect (pixels, not points)
+  GLfloat rot_current_angle;	// only right angles when rotation complete.
+  GLfloat angle_from, angle_to;	// start angle, end angle (degrees)
   double rot_start_time;
-  BOOL ignore_rotation_p;
 
-  NSSize rot_current_size;
-  GLfloat rot_current_angle;
+  BOOL ignore_rotation_p;	// whether hack requested "always portrait".
+				// some want this, some do not.
 
   NSTimer *crash_timer;
 
@@ -102,7 +101,7 @@
 
 # ifdef USE_BACKBUFFER
   CGContextRef backbuffer;
-  CGSize backbuffer_size;
+  CGSize backbuffer_size;	// pixels, not points.
   CGColorSpaceRef colorspace;
 
 #  ifdef BACKBUFFER_CGCONTEXT
@@ -122,12 +121,13 @@
 
 #ifdef USE_IPHONE
 - (void)didRotate:(NSNotification *)notification;
+- (BOOL)reshapeRotatedWindow;
 - (void)setScreenLocked:(BOOL)locked;
 #endif // USE_IPHONE
 
 #ifdef USE_BACKBUFFER
 - (void)initLayer;
-- (void)createBackbuffer;
+- (void)createBackbuffer:(CGSize)s;
 #endif // USE_BACKBUFFER
 
 @end

@@ -1,4 +1,4 @@
-/* xscreensaver, Copyright (c) 1992-2012 Jamie Zawinski <jwz@jwz.org>
+/* xscreensaver, Copyright (c) 1992-2014 Jamie Zawinski <jwz@jwz.org>
  *
  * Permission to use, copy, modify, distribute, and sell this software and its
  * documentation for any purpose is hereby granted without fee, provided that
@@ -154,7 +154,7 @@ blitspin_draw (Display *dpy, Window window, void *closure)
         st->first_time = 0;
         st->loaded_p = True;
         st->qwad = -1;
-        st->start_time = time ((time_t) 0);
+        st->start_time = time ((time_t *) 0);
         blitspin_init_2 (st);
       }
 
@@ -165,7 +165,7 @@ blitspin_draw (Display *dpy, Window window, void *closure)
 
   if (!st->img_loader &&
       st->load_ext_p &&
-      st->start_time + st->duration < time ((time_t) 0)) {
+      st->start_time + st->duration < time ((time_t *) 0)) {
     /* Start a new image loading, but keep rotating the old image 
        until the new one arrives. */
     st->img_loader = load_image_async_simple (0, st->xgwa.screen, st->window,
@@ -254,7 +254,7 @@ blitspin_init (Display *d_arg, Window w_arg)
   if (st->delay2 < 0) st->delay2 = 0;
   if (st->duration < 1) st->duration = 1;
 
-  st->start_time = time ((time_t) 0);
+  st->start_time = time ((time_t *) 0);
 
   bitmap_name = get_string_resource (st->dpy, "bitmap", "Bitmap");
   if (! bitmap_name || !*bitmap_name)
@@ -398,6 +398,12 @@ blitspin_reshape (Display *dpy, Window window, void *closure,
 static Bool
 blitspin_event (Display *dpy, Window window, void *closure, XEvent *event)
 {
+  struct state *st = (struct state *) closure;
+  if (screenhack_event_helper (dpy, window, event))
+    {
+      st->start_time = 0;
+      return True;
+    }
   return False;
 }
 
@@ -415,7 +421,7 @@ static const char *blitspin_defaults [] = {
   "*delay2:	500000",
   "*duration:	120",
   "*bitmap:	(default)",
-  "*geometry:	512x512",
+  "*geometry:	1080x1080",
 #ifdef USE_IPHONE
   "*ignoreRotation: True",
 #endif

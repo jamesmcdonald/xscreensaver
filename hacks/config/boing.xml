@@ -4,6 +4,8 @@
 
   <command arg="-root"/>
 
+  <video href="http://www.youtube.com/watch?v=J3KAsV31d6M"/>
+
   <number id="size" type="slider" arg="-size %"
           _label="Size" _low-label="Tiny" _high-label="Huge"
           low="0.02" high="0.9" default="0.5"/>
@@ -34,9 +36,9 @@
 
   <_description>
 
-This bouncing ball is a clone of the first graphics demo for the Amiga
-1000, which was written by Dale Luck and RJ Mical during a break at
-the 1984 Consumer Electronics Show (or so the legend goes.)
+A clone of the first graphics demo for the Amiga 1000, which was
+written by Dale Luck and RJ Mical during a break at the 1984 Consumer
+Electronics Show (or so the legend goes.)
 
 This looks like the original Amiga demo if you turn off "smoothing"
 and "lighting" and turn on "scanlines", and is somewhat more modern

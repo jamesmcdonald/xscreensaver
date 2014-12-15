@@ -1,4 +1,4 @@
-/* xscreensaver, Copyright (c) 1993-2013 Jamie Zawinski <jwz@jwz.org>
+/* xscreensaver, Copyright (c) 1993-2014 Jamie Zawinski <jwz@jwz.org>
  *
  * Permission to use, copy, modify, distribute, and sell this software and its
  * documentation for any purpose is hereby granted without fee, provided that
@@ -204,7 +204,7 @@ recurse (struct state *st, double x, double y, int l, Display *dpy, Window win)
 	     "I think this happens on HPUX.  I think it's non-IEEE
 	     to generate an exception instead of a silent NaN."
 	   */
-	  if ((abs(x) > 1.0E5) || (abs(y) > 1.0E5))
+	  if ((fabs(x) > 1.0E5) || (fabs(y) > 1.0E5))
 	    x = x / y;
 
 	  nx = st->f[0][0][i] * x + st->f[0][1][i] * y + st->f[0][2][i];
@@ -446,6 +446,12 @@ flame_reshape (Display *dpy, Window window, void *closure,
 static Bool
 flame_event (Display *dpy, Window window, void *closure, XEvent *event)
 {
+  struct state *st = (struct state *) closure;
+  if (screenhack_event_helper (dpy, window, event))
+    {
+      st->do_reset = 1;
+      return True;
+    }
   return False;
 }
 

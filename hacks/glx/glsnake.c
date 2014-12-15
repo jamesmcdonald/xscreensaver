@@ -149,15 +149,14 @@ static GLfloat angvel;
 #define DEFAULTS "*delay:          30000                      \n" \
                  "*count:          30                         \n" \
                  "*showFPS:        False                      \n" \
-                 "*labelfont:   -*-helvetica-medium-r-normal-*-180-*\n" \
-
+         "*labelfont:   -*-helvetica-medium-r-normal-*-*-180-*-*-*-*-*-*\n" \
 
 
 #undef countof
 #define countof(x) (sizeof((x))/sizeof((*x)))
 
 #include "xlockmore.h"
-#include "glxfonts.h"
+#include "texfont.h"
 
 static XrmOptionDescRec opts[] = {
     { "-explode", ".explode", XrmoptionSepArg, DEF_EXPLODE },
@@ -201,12 +200,7 @@ struct model_s {
 struct glsnake_cfg {
 #ifndef HAVE_GLUT
     GLXContext * glx_context;
-# ifdef HAVE_GLBITMAP
-    XFontStruct * font;
-    GLuint font_list;
-# else
-  texture_font_data *font_data;
-# endif
+    texture_font_data *font_data;
 #else
     /* font list number */
     int font;
@@ -1502,11 +1496,7 @@ ModeInfo * mi
     /* set up a font for the labels */
 #ifndef HAVE_GLUT
     if (titles)
-# ifdef HAVE_GLBITMAP
-	load_font(mi->dpy, "labelfont", &bp->font, &bp->font_list);
-# else
-        bp->font_data = load_texture_font (mi->dpy, "labelFont");
-# endif
+        bp->font_data = load_texture_font (mi->dpy, "labelfont");
 #endif
     
     /* build a solid display list */
@@ -1742,15 +1732,9 @@ static void draw_title(
 		glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, s[i++]);
 	}
 #else
-	print_gl_string(mi->dpy,
-# ifdef HAVE_GLBITMAP
-                        bp->font, bp->font_list,
-# else
-                        bp->font_data,
-# endif
-			mi->xgwa.width, mi->xgwa.height,
-			10.0, (float) mi->xgwa.height - 10.0,
-			s, False);
+	print_texture_label (mi->dpy, bp->font_data,
+                             mi->xgwa.width, mi->xgwa.height,
+                             1, s);
 #endif
     }
     glPopMatrix();

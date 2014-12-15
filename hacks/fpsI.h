@@ -1,4 +1,4 @@
-/* fps, Copyright (c) 2001-2012 Jamie Zawinski <jwz@jwz.org>
+/* fps, Copyright (c) 2001-2014 Jamie Zawinski <jwz@jwz.org>
  * Draw a frames-per-second display (Xlib and OpenGL).
  *
  * Permission to use, copy, modify, distribute, and sell this software and its
@@ -14,6 +14,8 @@
 # define __XSCREENSAVER_FPSI_H__
 
 #include "fps.h"
+#undef HAVE_GLBITMAP
+
 
 struct fps_state {
   Display *dpy;
@@ -24,11 +26,7 @@ struct fps_state {
   char string[1024];
 
   /* for glx/fps-gl.c */
-# ifdef HAVE_GLBITMAP
-  unsigned long font_dlist;
-# else
   void *gl_fps_data;
-# endif
 
   GC draw_gc, erase_gc;
 
