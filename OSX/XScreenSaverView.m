@@ -1,4 +1,4 @@
-/* xscreensaver, Copyright (c) 2006-2014 Jamie Zawinski <jwz@jwz.org>
+/* xscreensaver, Copyright (c) 2006-2016 Jamie Zawinski <jwz@jwz.org>
  *
  * Permission to use, copy, modify, distribute, and sell this software and its
  * documentation for any purpose is hereby granted without fee, provided that
@@ -16,14 +16,24 @@
  */
 
 #import <QuartzCore/QuartzCore.h>
+#import <sys/mman.h>
 #import <zlib.h>
 #import "XScreenSaverView.h"
 #import "XScreenSaverConfigSheet.h"
 #import "Updater.h"
 #import "screenhackI.h"
 #import "xlockmoreI.h"
+#import "jwxyzI.h"
+#import "jwxyz-cocoa.h"
 #import "jwxyz-timers.h"
 
+#ifdef USE_IPHONE
+// XScreenSaverView.m speaks OpenGL ES just fine, but enableBackbuffer does
+// need (jwzgles_)gluCheckExtension.
+# import "jwzglesI.h"
+#else
+# import <OpenGL/glu.h>
+#endif
 
 /* Garbage collection only exists if we are being compiled against the 
    10.6 SDK or newer, not if we are building against the 10.4 SDK.
@@ -35,6 +45,10 @@
 # import <objc/objc-auto.h>
 # define DO_GC_HACKERY
 #endif
+
+/* Duplicated in xlockmoreI.h and XScreenSaverGLView.m. */
+extern void clear_gl_error (void);
+extern void check_gl_error (const char *type);
 
 extern struct xscreensaver_function_table *xscreensaver_function_table;
 
@@ -165,17 +179,16 @@ extern NSDictionary *make_function_table_dict(void);  // ios-function-table.m
   const char *dir = [nsdir cStringUsingEncoding:NSUTF8StringEncoding];
   const char *opath = getenv ("PATH");
   if (!opath) opath = "/bin"; // $PATH is unset when running under Shark!
-  char *npath = (char *) malloc (strlen (opath) + strlen (dir) + 30);
-  strcpy (npath, "PATH=");
-  strcat (npath, dir);
+  char *npath = (char *) malloc (strlen (opath) + strlen (dir) + 2);
+  strcpy (npath, dir);
   strcat (npath, ":");
   strcat (npath, opath);
-  if (putenv (npath)) {
-    perror ("putenv");
-    NSAssert1 (0, @"putenv \"%s\" failed", npath);
+  if (setenv ("PATH", npath, 1)) {
+    perror ("setenv");
+    NSAssert1 (0, @"setenv \"PATH=%s\" failed", npath);
   }
 
-  /* Don't free (npath) -- MacOS's putenv() does not copy it. */
+  free (npath);
 }
 
 
@@ -188,14 +201,33 @@ extern NSDictionary *make_function_table_dict(void);  // ios-function-table.m
   NSAssert1 (nsb, @"no bundle for class %@", [self class]);
   
   const char *s = [name cStringUsingEncoding:NSUTF8StringEncoding];
-  char *env = (char *) malloc (strlen (s) + 40);
-  strcpy (env, "XSCREENSAVER_CLASSPATH=");
-  strcat (env, s);
-  if (putenv (env)) {
-    perror ("putenv");
-    NSAssert1 (0, @"putenv \"%s\" failed", env);
+  if (setenv ("XSCREENSAVER_CLASSPATH", s, 1)) {
+    perror ("setenv");
+    NSAssert1 (0, @"setenv \"XSCREENSAVER_CLASSPATH=%s\" failed", s);
   }
-  /* Don't free (env) -- MacOS's putenv() does not copy it. */
+}
+
+
+- (void) loadCustomFonts
+{
+# ifndef USE_IPHONE
+  NSBundle *nsb = [NSBundle bundleForClass:[self class]];
+  NSMutableArray *fonts = [NSMutableArray arrayWithCapacity:20];
+  for (NSString *ext in @[@"ttf", @"otf"]) {
+    [fonts addObjectsFromArray: [nsb pathsForResourcesOfType:ext
+                                     inDirectory:NULL]];
+  }
+  for (NSString *font in fonts) {
+    CFURLRef url = (CFURLRef) [NSURL fileURLWithPath: font];
+    CFErrorRef err = 0;
+    if (! CTFontManagerRegisterFontsForURL (url, kCTFontManagerScopeProcess,
+                                            &err)) {
+      // Just ignore errors:
+      // "The file has already been registered in the specified scope."
+      // NSLog (@"loading font: %@ %@", url, err);
+    }
+  }
+# endif // !USE_IPHONE
 }
 
 
@@ -249,7 +281,12 @@ add_default_options (const XrmOptionDescRec *opts,
     { 0, 0, 0, 0 }
   };
   static const char *default_defaults [] = {
+
+# if defined(USE_IPHONE) && !defined(__OPTIMIZE__)
+    ".doFPS:              True",
+# else
     ".doFPS:              False",
+# endif
     ".doubleBuffer:       True",
     ".multiSample:        False",
 # ifndef USE_IPHONE
@@ -259,7 +296,7 @@ add_default_options (const XrmOptionDescRec *opts,
 # endif
  // ".textLiteral:        ",
  // ".textFile:           ",
-    ".textURL:            http://en.wikipedia.org/w/index.php?title=Special:NewPages&feed=rss",
+    ".textURL:            https://en.wikipedia.org/w/index.php?title=Special:NewPages&feed=rss",
  // ".textProgram:        ",
     ".grabDesktopImages:  yes",
 # ifndef USE_IPHONE
@@ -338,42 +375,6 @@ add_default_options (const XrmOptionDescRec *opts,
 }
 
 
-#ifdef USE_IPHONE
-/* Returns the current time in seconds as a double.
- */
-static double
-double_time (void)
-{
-  struct timeval now;
-# ifdef GETTIMEOFDAY_TWO_ARGS
-  struct timezone tzp;
-  gettimeofday(&now, &tzp);
-# else
-  gettimeofday(&now);
-# endif
-
-  return (now.tv_sec + ((double) now.tv_usec * 0.000001));
-}
-#endif // USE_IPHONE
-
-#if TARGET_IPHONE_SIMULATOR
-static const char *
-orientname(unsigned long o)
-{
-  switch (o) {
-  case UIDeviceOrientationUnknown:		return "Unknown";
-  case UIDeviceOrientationPortrait:		return "Portrait";
-  case UIDeviceOrientationPortraitUpsideDown:	return "PortraitUpsideDown";
-  case UIDeviceOrientationLandscapeLeft:	return "LandscapeLeft";
-  case UIDeviceOrientationLandscapeRight:	return "LandscapeRight";
-  case UIDeviceOrientationFaceUp:		return "FaceUp";
-  case UIDeviceOrientationFaceDown:		return "FaceDown";
-  default:					return "ERROR";
-  }
-}
-#endif // TARGET_IPHONE_SIMULATOR
-
-
 - (id) initWithFrame:(NSRect)frame
            saverName:(NSString *)saverName
            isPreview:(BOOL)isPreview
@@ -401,7 +402,7 @@ orientname(unsigned long o)
                              encoding:NSISOLatin1StringEncoding];
   name = [@"org.jwz.xscreensaver." stringByAppendingString:name];
   [self setResourcesEnv:name];
-
+  [self loadCustomFonts];
   
   XrmOptionDescRec *opts = 0;
   const char **defs = 0;
@@ -416,45 +417,32 @@ orientname(unsigned long o)
 
   next_frame_time = 0;
 
-# ifdef USE_IPHONE
-  double s = [self hackedContentScaleFactor];
-# else
-  double s = 1;
+# if !defined USE_IPHONE && defined JWXYZ_QUARTZ
+  // When the view fills the screen and double buffering is enabled, OS X will
+  // use page flipping for a minor CPU/FPS boost. In windowed mode, double
+  // buffering reduces the frame rate to 1/2 the screen's refresh rate.
+  double_buffered_p = !isPreview;
 # endif
 
-  CGSize bb_size;	// pixels, not points
-  bb_size.width  = s * frame.size.width;
-  bb_size.height = s * frame.size.height;
-
 # ifdef USE_IPHONE
-  initial_bounds = rot_current_size = rot_from = rot_to = bb_size;
-  rotation_ratio = -1;
-
-  orientation = UIDeviceOrientationUnknown;
-  [self didRotate:nil];
   [self initGestures];
 
   // So we can tell when we're docked.
   [UIDevice currentDevice].batteryMonitoringEnabled = YES;
-# endif // USE_IPHONE
 
-# ifdef USE_BACKBUFFER
-  [self createBackbuffer:bb_size];
-  [self initLayer];
-# endif
+  [self setBackgroundColor:[NSColor blackColor]];
+# endif // USE_IPHONE
 
   return self;
 }
 
-- (void) initLayer
+
+#ifdef USE_IPHONE
++ (Class) layerClass
 {
-# if !defined(USE_IPHONE) && defined(BACKBUFFER_CALAYER)
-  [self setLayer: [CALayer layer]];
-  self.layer.delegate = self;
-  self.layer.opaque = YES;
-  [self setWantsLayer: YES];
-# endif  // !USE_IPHONE && BACKBUFFER_CALAYER
+  return [CAEAGLLayer class];
 }
+#endif
 
 
 - (id) initWithFrame:(NSRect)frame isPreview:(BOOL)p
@@ -465,23 +453,32 @@ orientname(unsigned long o)
 
 - (void) dealloc
 {
-  NSAssert(![self isAnimating], @"still animating");
+  if ([self isAnimating])
+    [self stopAnimation];
   NSAssert(!xdata, @"xdata not yet freed");
   NSAssert(!xdpy, @"xdpy not yet freed");
 
-# ifdef USE_BACKBUFFER
-  if (backbuffer)
-    CGContextRelease (backbuffer);
+# ifdef USE_IPHONE
+  [[NSNotificationCenter defaultCenter] removeObserver:self];
+# endif
 
+#  ifdef BACKBUFFER_OPENGL
+# ifndef USE_IPHONE
+  [pixfmt release];
+# endif // !USE_IPHONE
+  [ogl_ctx release];
+  // Releasing the OpenGL context should also free any OpenGL objects,
+  // including the backbuffer texture and frame/render/depthbuffers.
+#  endif // BACKBUFFER_OPENGL
+
+# if defined JWXYZ_GL && defined USE_IPHONE
+  [ogl_ctx_pixmap release];
+# endif // JWXYZ_GL
+
+# ifdef JWXYZ_QUARTZ
   if (colorspace)
     CGColorSpaceRelease (colorspace);
-
-#  ifdef BACKBUFFER_CGCONTEXT
-  if (window_ctx)
-    CGContextRelease (window_ctx);
-#  endif // BACKBUFFER_CGCONTEXT
-
-# endif // USE_BACKBUFFER
+# endif // JWXYZ_QUARTZ
 
   [prefsReader release];
 
@@ -518,6 +515,45 @@ orientname(unsigned long o)
   [prefs setBool:YES forKey:@"wasRunning"];
   [prefs synchronize];
 }
+
+
+- (void) resizeGL
+{
+  if (!ogl_ctx)
+    return;
+
+  CGSize screen_size = self.bounds.size;
+  double s = self.contentScaleFactor;
+  screen_size.width *= s;
+  screen_size.height *= s;
+
+#if defined JWXYZ_GL
+  GLuint *framebuffer = &xwindow->gl_framebuffer;
+  GLuint *renderbuffer = &xwindow->gl_renderbuffer;
+  xwindow->window.current_drawable = xwindow;
+#elif defined JWXYZ_QUARTZ
+  GLuint *framebuffer = &gl_framebuffer;
+  GLuint *renderbuffer = &gl_renderbuffer;
+#endif // JWXYZ_QUARTZ
+
+  if (*framebuffer)  glDeleteFramebuffersOES  (1, framebuffer);
+  if (*renderbuffer) glDeleteRenderbuffersOES (1, renderbuffer);
+
+  create_framebuffer (framebuffer, renderbuffer);
+
+  //   redundant?
+  //     glRenderbufferStorageOES (GL_RENDERBUFFER_OES, GL_RGBA8_OES,
+  //                               (int)size.width, (int)size.height);
+  [ogl_ctx renderbufferStorage:GL_RENDERBUFFER_OES
+                  fromDrawable:(CAEAGLLayer*)self.layer];
+
+  glFramebufferRenderbufferOES (GL_FRAMEBUFFER_OES,  GL_COLOR_ATTACHMENT0_OES,
+                                GL_RENDERBUFFER_OES, *renderbuffer);
+
+  [self addExtraRenderbuffers:screen_size];
+
+  check_framebuffer_status();
+}
 #endif // USE_IPHONE
 
 
@@ -527,7 +563,7 @@ orientname(unsigned long o)
   NSAssert(!initted_p && !xdata, @"already initialized");
 
   // See comment in render_x11() for why this value is important:
-  [self setAnimationTimeInterval: 1.0 / 120.0];
+  [self setAnimationTimeInterval: 1.0 / 240.0];
 
   [super startAnimation];
   /* We can't draw on the window from this method, so we actually do the
@@ -560,8 +596,129 @@ orientname(unsigned long o)
   [[UIApplication sharedApplication]
     setStatusBarHidden:YES withAnimation:UIStatusBarAnimationNone];
 # endif
-}
 
+  xwindow = (Window) calloc (1, sizeof(*xwindow));
+  xwindow->type = WINDOW;
+  xwindow->window.view = self;
+  CFRetain (xwindow->window.view);   // needed for garbage collection?
+
+#ifdef BACKBUFFER_OPENGL
+  CGSize new_backbuffer_size;
+
+  {
+# ifndef USE_IPHONE
+    if (!ogl_ctx) {
+
+      pixfmt = [self getGLPixelFormat];
+      [pixfmt retain];
+
+      NSAssert (pixfmt, @"unable to create NSOpenGLPixelFormat");
+
+      // Fun: On OS X 10.7, the second time an OpenGL context is created, after
+      // the preferences dialog is launched in SaverTester, the context only
+      // lasts until the first full GC. Then it turns black. Solution is to
+      // reuse the OpenGL context after this point.
+      // "Analyze" says that both pixfmt and ogl_ctx are leaked.
+      ogl_ctx = [[NSOpenGLContext alloc] initWithFormat:pixfmt
+                                         shareContext:nil];
+
+      // Sync refreshes to the vertical blanking interval
+      GLint r = 1;
+      [ogl_ctx setValues:&r forParameter:NSOpenGLCPSwapInterval];
+//    check_gl_error ("NSOpenGLCPSwapInterval");  // SEGV sometimes. Too early?
+    }
+
+    [ogl_ctx makeCurrentContext];
+    check_gl_error ("makeCurrentContext");
+
+    // NSOpenGLContext logs an 'invalid drawable' when this is called
+    // from initWithFrame.
+    [ogl_ctx setView:self];
+
+    // This may not be necessary if there's FBO support.
+#  ifdef JWXYZ_GL
+    xwindow->window.pixfmt = pixfmt;
+    CFRetain (xwindow->window.pixfmt);
+    xwindow->window.virtual_screen = [ogl_ctx currentVirtualScreen];
+    xwindow->window.current_drawable = xwindow;
+    NSAssert (ogl_ctx, @"no CGContext");
+#  endif
+
+    // Clear frame buffer ASAP, else there are bits left over from other apps.
+    glClearColor (0, 0, 0, 1);
+    glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+//    glFinish ();
+//    glXSwapBuffers (mi->dpy, mi->window);
+
+
+    // Enable multi-threading, if possible.  This runs most OpenGL commands
+    // and GPU management on a second CPU.
+    {
+#  ifndef  kCGLCEMPEngine
+#   define kCGLCEMPEngine 313  // Added in MacOS 10.4.8 + XCode 2.4.
+#  endif
+      CGLContextObj cctx = CGLGetCurrentContext();
+      CGLError err = CGLEnable (cctx, kCGLCEMPEngine);
+      if (err != kCGLNoError) {
+        NSLog (@"enabling multi-threaded OpenGL failed: %d", err);
+      }
+    }
+
+    new_backbuffer_size = NSSizeToCGSize ([self bounds].size);
+
+# else  // USE_IPHONE
+    if (!ogl_ctx) {
+      CAEAGLLayer *eagl_layer = (CAEAGLLayer *) self.layer;
+      eagl_layer.opaque = TRUE;
+      eagl_layer.drawableProperties = [self getGLProperties];
+
+      // Without this, the GL frame buffer is half the screen resolution!
+      eagl_layer.contentsScale = [UIScreen mainScreen].scale;
+
+      ogl_ctx = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES1];
+# ifdef JWXYZ_GL
+      ogl_ctx_pixmap = [[EAGLContext alloc]
+                        initWithAPI:kEAGLRenderingAPIOpenGLES1
+                        sharegroup:ogl_ctx.sharegroup];
+# endif // JWXYZ_GL
+
+      eagl_layer.contentsGravity = [self getCAGravity];
+    }
+
+# ifdef JWXYZ_GL
+    xwindow->window.ogl_ctx_pixmap = ogl_ctx_pixmap;
+# endif // JWXYZ_GL
+
+    [EAGLContext setCurrentContext: ogl_ctx];
+
+    [self resizeGL];
+
+    double s = [self hackedContentScaleFactor];
+    new_backbuffer_size = self.bounds.size;
+    new_backbuffer_size.width *= s;
+    new_backbuffer_size.height *= s;
+
+# endif // USE_IPHONE
+
+# ifdef JWXYZ_GL
+    xwindow->ogl_ctx = ogl_ctx;
+#  ifndef USE_IPHONE
+    CFRetain (xwindow->ogl_ctx);
+#  endif // USE_IPHONE
+# endif // JWXYZ_GL
+
+    check_gl_error ("startAnimation");
+
+//  NSLog (@"%s / %s / %s\n", glGetString (GL_VENDOR),
+//         glGetString (GL_RENDERER), glGetString (GL_VERSION));
+
+    [self enableBackbuffer:new_backbuffer_size];
+  }
+#endif // BACKBUFFER_OPENGL
+
+  [self setViewport];
+  [self createBackbuffer:new_backbuffer_size];
+}
 
 - (void)stopAnimation
 {
@@ -581,10 +738,13 @@ orientname(unsigned long o)
     xsft->free_cb (xdpy, xwindow, xdata);
     [self unlockFocus];
 
-    // xdpy must be freed before dealloc is called, because xdpy owns a
-    // circular reference to the parent XScreenSaverView.
     jwxyz_free_display (xdpy);
     xdpy = NULL;
+# if defined JWXYZ_GL && !defined USE_IPHONE
+    CFRelease (xwindow->ogl_ctx);
+# endif
+    CFRelease (xwindow->window.view);
+    free (xwindow);
     xwindow = NULL;
 
 //  setup_p = NO; // #### wait, do we need this?
@@ -611,19 +771,50 @@ orientname(unsigned long o)
   [[UIApplication sharedApplication]
     setStatusBarHidden:NO withAnimation:UIStatusBarAnimationNone];
 # endif
+
+  // Without this, the GL frame stays on screen when switching tabs
+  // in System Preferences.
+  // (Or perhaps it used to. It doesn't seem to matter on 10.9.)
+  //
+# ifndef USE_IPHONE
+  [NSOpenGLContext clearCurrentContext];
+# endif // !USE_IPHONE
+
+  clear_gl_error();	// This hack is defunct, don't let this linger.
+
+# ifdef JWXYZ_QUARTZ
+  CGContextRelease (backbuffer);
+  backbuffer = nil;
+
+  if (backbuffer_len)
+    munmap (backbuffer_data, backbuffer_len);
+  backbuffer_data = NULL;
+  backbuffer_len = 0;
+# endif
 }
 
 
-/* Hook for the XScreenSaverGLView subclass
- */
+- (NSOpenGLContext *) oglContext
+{
+  return ogl_ctx;
+}
+
+
+// #### maybe this could/should just be on 'lockFocus' instead?
 - (void) prepareContext
 {
-}
+  if (xwindow) {
+#ifdef USE_IPHONE
+    [EAGLContext setCurrentContext:ogl_ctx];
+#else  // !USE_IPHONE
+    [ogl_ctx makeCurrentContext];
+//    check_gl_error ("makeCurrentContext");
+#endif // !USE_IPHONE
 
-/* Hook for the XScreenSaverGLView subclass
- */
-- (void) resizeContext
-{
+#ifdef JWXYZ_GL
+    xwindow->window.current_drawable = xwindow;
+#endif
+  }
 }
 
 
@@ -654,86 +845,65 @@ screenhack_do_fps (Display *dpy, Window w, fps_state *fpst, void *closure)
  */
 - (CGFloat) hackedContentScaleFactor
 {
-  NSSize ssize = [[[UIScreen mainScreen] currentMode] size];
   NSSize bsize = [self bounds].size;
 
+  CGFloat
+    max_bsize = bsize.width > bsize.height ? bsize.width : bsize.height;
+
   // Ratio of screen size in pixels to view size in points.
-  GLfloat s = ((ssize.width > ssize.height ? ssize.width : ssize.height) /
-               (bsize.width > bsize.height ? bsize.width : bsize.height));
+  CGFloat s = self.contentScaleFactor;
 
-  if (ssize.width >= 1024 && ssize.height >= 1024)
-    s = 1;
+  // Two constraints:
 
-  return s;
+  // 1. Don't exceed -- let's say 1280 pixels in either direction.
+  //    (Otherwise the frame rate gets bad.)
+  //    Actually let's make that 1440 since iPhone 6 is natively 1334.
+  CGFloat mag0 = ceil(max_bsize * s / 1440);
+
+  // 2. Don't let the pixel size get too small.
+  //    (Otherwise pixels in IFS and similar are too fine.)
+  //    So don't let the result be > 2 pixels per point.
+  CGFloat mag1 = ceil(s / 2);
+
+  // As of iPhone 6, mag0 is always >= mag1. This may not be true in the future.
+  // (desired scale factor) = s / (desired magnification factor)
+  return s / (mag0 > mag1 ? mag0 : mag1);
 }
 
 
-static GLfloat _global_rot_current_angle_kludge;
-
-double current_device_rotation (void)
+double
+current_device_rotation (void)
 {
-  return -_global_rot_current_angle_kludge;
-}
+  UIDeviceOrientation o = [[UIDevice currentDevice] orientation];
 
-
-- (void) hackRotation
-{
-  if (rotation_ratio >= 0) {	// in the midst of a rotation animation
-
-#   define CLAMP180(N) while (N < 0) N += 360; while (N > 180) N -= 360
-    GLfloat f = angle_from;
-    GLfloat t = angle_to;
-    CLAMP180(f);
-    CLAMP180(t);
-    GLfloat dist = -(t-f);
-    CLAMP180(dist);
-
-    // Intermediate angle.
-    rot_current_angle = f - rotation_ratio * dist;
-
-    // Intermediate frame size.
-    rot_current_size.width = rot_from.width + 
-      rotation_ratio * (rot_to.width - rot_from.width);
-    rot_current_size.height = rot_from.height + 
-      rotation_ratio * (rot_to.height - rot_from.height);
-
-    // Tick animation.  Complete rotation in 1/6th sec.
-    double now = double_time();
-    double duration = 1/6.0;
-    rotation_ratio = 1 - ((rot_start_time + duration - now) / duration);
-
-    if (rotation_ratio > 1 || ignore_rotation_p) {	// Done animating.
-      orientation = new_orientation;
-      rot_current_angle = angle_to;
-      rot_current_size = rot_to;
-      rotation_ratio = -1;
-
-# if TARGET_IPHONE_SIMULATOR
-      NSLog (@"rotation ended: %s %d, %d x %d",
-             orientname(orientation), (int) rot_current_angle,
-             (int) rot_current_size.width, (int) rot_current_size.height);
-# endif
-
-      // Check orientation again in case we rotated again while rotating:
-      // this is a no-op if nothing has changed.
-      [self didRotate:nil];
-    }
-  } else {			// Not animating a rotation.
-    rot_current_angle = angle_to;
-    rot_current_size = rot_to;
+  /* Sometimes UIDevice doesn't know the proper orientation, or the device is
+     face up/face down, so in those cases fall back to the status bar
+     orientation. The SaverViewController tries to set the status bar to the
+     proper orientation before it creates the XScreenSaverView; see
+     _storedOrientation in SaverViewController.
+   */
+  if (o == UIDeviceOrientationUnknown ||
+      o == UIDeviceOrientationFaceUp  ||
+      o == UIDeviceOrientationFaceDown) {
+    /* Mind the differences between UIInterfaceOrientation and
+       UIDeviceOrientation:
+       1. UIInterfaceOrientation does not include FaceUp and FaceDown.
+       2. LandscapeLeft and LandscapeRight are swapped between the two. But
+          converting between device and interface orientation doesn't need to
+          take this into account, because (from the UIInterfaceOrientation
+          description): "rotating the device requires rotating the content in
+          the opposite direction."
+	 */
+    /* statusBarOrientation deprecated in iOS 9 */
+    o = [UIApplication sharedApplication].statusBarOrientation;
   }
 
-  CLAMP180(rot_current_angle);
-  _global_rot_current_angle_kludge = rot_current_angle;
-
-#   undef CLAMP180
-
-  CGSize rotsize = ((ignore_rotation_p || ![self reshapeRotatedWindow])
-                    ? initial_bounds
-                    : rot_current_size);
-  if ((int) backbuffer_size.width  != (int) rotsize.width ||
-      (int) backbuffer_size.height != (int) rotsize.height)
-    [self resize_x11];
+  switch (o) {
+  case UIDeviceOrientationLandscapeLeft:      return -90; break;
+  case UIDeviceOrientationLandscapeRight:     return  90; break;
+  case UIDeviceOrientationPortraitUpsideDown: return 180; break;
+  default:                                    return 0;   break;
+  }
 }
 
 
@@ -766,7 +936,202 @@ double current_device_rotation (void)
 #endif // USE_IPHONE
 
 
-#ifdef USE_BACKBUFFER
+#ifdef JWXYZ_QUARTZ
+
+# ifndef USE_IPHONE
+
+struct gl_version
+{
+  // iOS always uses OpenGL ES 1.1.
+  unsigned major;
+  unsigned minor;
+};
+
+static GLboolean
+gl_check_ver (const struct gl_version *caps,
+              unsigned gl_major,
+              unsigned gl_minor)
+{
+  return caps->major > gl_major ||
+           (caps->major == gl_major && caps->minor >= gl_minor);
+}
+
+# endif
+
+/* Called during startAnimation before the first call to createBackbuffer. */
+- (void) enableBackbuffer:(CGSize)new_backbuffer_size
+{
+# ifndef USE_IPHONE
+  struct gl_version version;
+
+  {
+    const char *version_str = (const char *)glGetString (GL_VERSION);
+
+    /* iPhone is always OpenGL ES 1.1. */
+    if (sscanf ((const char *)version_str, "%u.%u",
+                &version.major, &version.minor) < 2)
+    {
+      version.major = 1;
+      version.minor = 1;
+    }
+  }
+# endif
+
+  // The OpenGL extensions in use in here are pretty are pretty much ubiquitous
+  // on OS X, but it's still good form to check.
+  const GLubyte *extensions = glGetString (GL_EXTENSIONS);
+
+  glGenTextures (1, &backbuffer_texture);
+
+  // On really old systems, it would make sense to split the texture
+  // into subsections
+# ifndef USE_IPHONE
+  gl_texture_target = (gluCheckExtension ((const GLubyte *)
+                                         "GL_ARB_texture_rectangle",
+                                         extensions)
+                       ? GL_TEXTURE_RECTANGLE_EXT : GL_TEXTURE_2D);
+# else
+  // OES_texture_npot also provides this, but iOS never provides it.
+  gl_limited_npot_p = jwzgles_gluCheckExtension
+    ((const GLubyte *) "GL_APPLE_texture_2D_limited_npot", extensions);
+  gl_texture_target = GL_TEXTURE_2D;
+# endif
+
+  glBindTexture (gl_texture_target, &backbuffer_texture);
+  glTexParameteri (gl_texture_target, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  // GL_LINEAR might make sense on Retina iPads.
+  glTexParameteri (gl_texture_target, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri (gl_texture_target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri (gl_texture_target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+# ifndef USE_IPHONE
+  // There isn't much sense in supporting one of these if the other
+  // isn't present.
+  gl_apple_client_storage_p =
+    gluCheckExtension ((const GLubyte *)"GL_APPLE_client_storage",
+                       extensions) &&
+    gluCheckExtension ((const GLubyte *)"GL_APPLE_texture_range", extensions);
+
+  if (gl_apple_client_storage_p) {
+    glTexParameteri (gl_texture_target, GL_TEXTURE_STORAGE_HINT_APPLE,
+                     GL_STORAGE_SHARED_APPLE);
+    glPixelStorei (GL_UNPACK_CLIENT_STORAGE_APPLE, GL_TRUE);
+  }
+# endif
+
+  // If a video adapter suports BGRA textures, then that's probably as fast as
+  // you're gonna get for getting a texture onto the screen.
+# ifdef USE_IPHONE
+  gl_pixel_format =
+    jwzgles_gluCheckExtension
+      ((const GLubyte *)"GL_APPLE_texture_format_BGRA8888", extensions) ?
+      GL_BGRA :
+      GL_RGBA;
+
+  gl_pixel_type = GL_UNSIGNED_BYTE;
+  // See also OES_read_format.
+# else
+  if (gl_check_ver (&version, 1, 2) ||
+      (gluCheckExtension ((const GLubyte *)"GL_EXT_bgra", extensions) &&
+       gluCheckExtension ((const GLubyte *)"GL_APPLE_packed_pixels",
+                          extensions))) {
+    gl_pixel_format = GL_BGRA;
+    // Both Intel and PowerPC-era docs say to use GL_UNSIGNED_INT_8_8_8_8_REV.
+    gl_pixel_type = GL_UNSIGNED_INT_8_8_8_8_REV;
+  } else {
+    gl_pixel_format = GL_RGBA;
+    gl_pixel_type = GL_UNSIGNED_BYTE;
+  }
+  // GL_ABGR_EXT/GL_UNSIGNED_BYTE is another possibilty that may have made more
+  // sense on PowerPC.
+# endif
+
+  glEnable (gl_texture_target);
+  glEnableClientState (GL_VERTEX_ARRAY);
+  glEnableClientState (GL_TEXTURE_COORD_ARRAY);
+
+  check_gl_error ("enableBackbuffer");
+}
+
+
+static GLsizei
+to_pow2 (size_t x)
+{
+  if (x <= 1)
+    return 1;
+
+  size_t mask = (size_t)-1;
+  unsigned bits = sizeof(x) * CHAR_BIT;
+  unsigned log2 = bits;
+
+  --x;
+  while (bits) {
+    if (!(x & mask)) {
+      log2 -= bits;
+      x <<= bits;
+    }
+
+    bits >>= 1;
+    mask <<= bits;
+  }
+
+  return 1 << log2;
+}
+
+
+#ifdef USE_IPHONE
+- (BOOL) suppressRotationAnimation
+{
+  return [self ignoreRotation];	// Don't animate if we aren't rotating
+}
+
+- (BOOL) rotateTouches
+{
+  return FALSE;			// Adjust event coordinates only if rotating
+}
+#endif
+
+
+- (void) setViewport
+{
+# ifdef BACKBUFFER_OPENGL
+  NSAssert ([NSOpenGLContext currentContext] ==
+            ogl_ctx, @"invalid GL context");
+
+  NSSize new_size = self.bounds.size;
+
+#  ifdef USE_IPHONE
+  GLfloat s = self.contentScaleFactor;
+  GLfloat hs = self.hackedContentScaleFactor;
+#  else // !USE_IPHONE
+  const GLfloat s = 1;
+  const GLfloat hs = s;
+#  endif
+
+  // On OS X this almost isn't necessary, except for the ugly aliasing
+  // artifacts.
+  glViewport (0, 0, new_size.width * s, new_size.height * s);
+
+  glMatrixMode (GL_PROJECTION);
+  glLoadIdentity();
+#  ifdef USE_IPHONE
+  glOrthof
+#  else
+  glOrtho
+#  endif
+    (-new_size.width * hs, new_size.width * hs,
+     -new_size.height * hs, new_size.height * hs,
+     -1, 1);
+
+#  ifdef USE_IPHONE
+  if ([self ignoreRotation]) {
+    int o = (int) -current_device_rotation();
+    glRotatef (o, 0, 0, 1);
+  }
+#  endif // USE_IPHONE
+# endif // BACKBUFFER_OPENGL
+}
+
 
 /* Create a bitmap context into which we render everything.
    If the desired size has changed, re-created it.
@@ -778,152 +1143,382 @@ double current_device_rotation (void)
   // Colorspaces and CGContexts only happen with non-GL hacks.
   if (colorspace)
     CGColorSpaceRelease (colorspace);
-# ifdef BACKBUFFER_CGCONTEXT
-  if (window_ctx)
-    CGContextRelease (window_ctx);
-# endif
-	
+
   NSWindow *window = [self window];
 
   if (window && xdpy) {
     [self lockFocus];
 
-# if defined(BACKBUFFER_CGCONTEXT)
-    // TODO: This was borrowed from jwxyz_window_resized, and should
-    // probably be refactored.
-	  
-    // Figure out which screen the window is currently on.
-    CGDirectDisplayID cgdpy = 0;
-
-    {
-//    int wx, wy;
-//    TODO: XTranslateCoordinates is returning (0,1200) on my system.
-//    Is this right?
-//    In any case, those weren't valid coordinates for CGGetDisplaysWithPoint.
-//    XTranslateCoordinates (xdpy, xwindow, NULL, 0, 0, &wx, &wy, NULL);
-//    p.x = wx;
-//    p.y = wy;
-
-      NSPoint p0 = {0, 0};
-      p0 = [window convertBaseToScreen:p0];
-      CGPoint p = {p0.x, p0.y};
-      CGDisplayCount n;
-      CGGetDisplaysWithPoint (p, 1, &cgdpy, &n);
-      NSAssert (cgdpy, @"unable to find CGDisplay");
-    }
-
-    {
-      // Figure out this screen's colorspace, and use that for every CGImage.
-      //
-      CMProfileRef profile = 0;
-
-      // CMGetProfileByAVID is deprecated as of OS X 10.6, but there's no
-      // documented replacement as of OS X 10.9.
-      // http://lists.apple.com/archives/colorsync-dev/2012/Nov/msg00001.html
-      CMGetProfileByAVID ((CMDisplayIDType) cgdpy, &profile);
-      NSAssert (profile, @"unable to find colorspace profile");
-      colorspace = CGColorSpaceCreateWithPlatformColorSpace (profile);
-      NSAssert (colorspace, @"unable to find colorspace");
-    }
-# elif defined(BACKBUFFER_CALAYER)
+# ifdef BACKBUFFER_OPENGL
     // Was apparently faster until 10.9.
     colorspace = CGColorSpaceCreateDeviceRGB ();
-# endif // BACKBUFFER_CALAYER
+# endif // BACKBUFFER_OPENGL
 
-# ifdef BACKBUFFER_CGCONTEXT
-    window_ctx = [[window graphicsContext] graphicsPort];
-    CGContextRetain (window_ctx);
-# endif // BACKBUFFER_CGCONTEXT
-	  
     [self unlockFocus];
   } else {
-# ifdef BACKBUFFER_CGCONTEXT
-    window_ctx = NULL;
-# endif // BACKBUFFER_CGCONTEXT
     colorspace = CGColorSpaceCreateDeviceRGB();
   }
 
+  CGSize osize = CGSizeZero;
+  if (backbuffer) {
+    osize.width = CGBitmapContextGetWidth(backbuffer);
+    osize.height = CGBitmapContextGetHeight(backbuffer);
+  }
+
   if (backbuffer &&
-      (int)backbuffer_size.width  == (int)new_size.width &&
-      (int)backbuffer_size.height == (int)new_size.height)
+      (int)osize.width  == (int)new_size.width &&
+      (int)osize.height == (int)new_size.height)
     return;
 
   CGContextRef ob = backbuffer;
+  void *odata = backbuffer_data;
+  size_t olen = backbuffer_len;
 
-  CGSize osize = backbuffer_size;	// pixels, not points.
-  backbuffer_size = new_size;		// pixels, not points.
-
-# if TARGET_IPHONE_SIMULATOR
+# if !defined __OPTIMIZE__ || TARGET_IPHONE_SIMULATOR
   NSLog(@"backbuffer %.0fx%.0f",
-        backbuffer_size.width, backbuffer_size.height);
+        new_size.width, new_size.height);
 # endif
 
-  backbuffer = CGBitmapContextCreate (NULL,
-                                      (int)backbuffer_size.width,
-                                      (int)backbuffer_size.height,
-                                      8, 
-                                      (int)backbuffer_size.width * 4,
+  /* OS X uses APPLE_client_storage and APPLE_texture_range, as described in
+     <https://developer.apple.com/library/mac/documentation/GraphicsImaging/Conceptual/OpenGL-MacProgGuide/opengl_texturedata/opengl_texturedata.html>.
+
+     iOS uses bog-standard glTexImage2D (for now).
+
+     glMapBuffer is the standard way to get data from system RAM to video
+     memory asynchronously and without a memcpy, but support for
+     APPLE_client_storage is ubiquitous on OS X (not so for glMapBuffer),
+     and on iOS GL_PIXEL_UNPACK_BUFFER is only available on OpenGL ES 3
+     (iPhone 5S or newer). Plus, glMapBuffer doesn't work well with
+     CGBitmapContext: glMapBuffer can return a different pointer on each
+     call, but a CGBitmapContext doesn't allow its data pointer to be
+     changed -- and recreating the context for a new pointer can be
+     expensive (glyph caches get dumped, for instance).
+
+     glMapBufferRange has MAP_FLUSH_EXPLICIT_BIT and MAP_UNSYNCHRONIZED_BIT,
+     and these seem to allow mapping the buffer and leaving it where it is
+     in client address space while OpenGL works with the buffer, but it
+     requires OpenGL 3 Core profile on OS X (and ES 3 on iOS for
+     GL_PIXEL_UNPACK_BUFFER), so point goes to APPLE_client_storage.
+
+     AMD_pinned_buffer provides the same advantage as glMapBufferRange, but
+     Apple never implemented that one for OS X.
+   */
+
+  backbuffer_data = NULL;
+  gl_texture_w = (int)new_size.width;
+  gl_texture_h = (int)new_size.height;
+
+  NSAssert (gl_texture_target == GL_TEXTURE_2D
+# ifndef USE_IPHONE
+            || gl_texture_target == GL_TEXTURE_RECTANGLE_EXT
+# endif
+		  , @"unexpected GL texture target");
+
+# ifndef USE_IPHONE
+  if (gl_texture_target != GL_TEXTURE_RECTANGLE_EXT)
+# else
+  if (!gl_limited_npot_p)
+# endif
+  {
+    gl_texture_w = to_pow2 (gl_texture_w);
+    gl_texture_h = to_pow2 (gl_texture_h);
+  }
+
+  size_t bytes_per_row = gl_texture_w * 4;
+
+# if defined(BACKBUFFER_OPENGL) && !defined(USE_IPHONE)
+  // APPLE_client_storage requires texture width to be aligned to 32 bytes, or
+  // it will fall back to a memcpy.
+  // https://developer.apple.com/library/mac/documentation/GraphicsImaging/Conceptual/OpenGL-MacProgGuide/opengl_texturedata/opengl_texturedata.html#//apple_ref/doc/uid/TP40001987-CH407-SW24
+  bytes_per_row = (bytes_per_row + 31) & ~31;
+# endif // BACKBUFFER_OPENGL && !USE_IPHONE
+
+  backbuffer_len = bytes_per_row * gl_texture_h;
+  if (backbuffer_len) // mmap requires this to be non-zero.
+    backbuffer_data = mmap (NULL, backbuffer_len,
+                            PROT_READ | PROT_WRITE, MAP_ANON | MAP_SHARED,
+                            -1, 0);
+
+  BOOL alpha_first_p, order_little_p;
+
+  if (gl_pixel_format == GL_BGRA) {
+    alpha_first_p = YES;
+    order_little_p = YES;
+/*
+  } else if (gl_pixel_format == GL_ABGR_EXT) {
+    alpha_first_p = NO;
+    order_little_p = YES; */
+  } else {
+    NSAssert (gl_pixel_format == GL_RGBA, @"unknown GL pixel format");
+    alpha_first_p = NO;
+    order_little_p = NO;
+  }
+
+#ifdef USE_IPHONE
+  NSAssert (gl_pixel_type == GL_UNSIGNED_BYTE, @"unknown GL pixel type");
+#else
+  NSAssert (gl_pixel_type == GL_UNSIGNED_INT_8_8_8_8 ||
+            gl_pixel_type == GL_UNSIGNED_INT_8_8_8_8_REV ||
+            gl_pixel_type == GL_UNSIGNED_BYTE,
+            @"unknown GL pixel type");
+
+#if defined __LITTLE_ENDIAN__
+  const GLenum backwards_pixel_type = GL_UNSIGNED_INT_8_8_8_8;
+#elif defined __BIG_ENDIAN__
+  const GLenum backwards_pixel_type = GL_UNSIGNED_INT_8_8_8_8_REV;
+#else
+# error Unknown byte order.
+#endif
+
+  if (gl_pixel_type == backwards_pixel_type)
+    order_little_p ^= YES;
+#endif
+
+  CGBitmapInfo bitmap_info =
+    (alpha_first_p ? kCGImageAlphaNoneSkipFirst : kCGImageAlphaNoneSkipLast) |
+    (order_little_p ? kCGBitmapByteOrder32Little : kCGBitmapByteOrder32Big);
+
+  backbuffer = CGBitmapContextCreate (backbuffer_data,
+                                      (int)new_size.width,
+                                      (int)new_size.height,
+                                      8,
+                                      bytes_per_row,
                                       colorspace,
-                                      // kCGImageAlphaPremultipliedLast
-                                      (kCGImageAlphaNoneSkipFirst |
-                                       kCGBitmapByteOrder32Host)
-                                      );
+                                      bitmap_info);
   NSAssert (backbuffer, @"unable to allocate back buffer");
 
   // Clear it.
   CGRect r;
   r.origin.x = r.origin.y = 0;
-  r.size = backbuffer_size;
+  r.size = new_size;
   CGContextSetGrayFillColor (backbuffer, 0, 1);
   CGContextFillRect (backbuffer, r);
+
+# if defined(BACKBUFFER_OPENGL) && !defined(USE_IPHONE)
+  if (gl_apple_client_storage_p)
+    glTextureRangeAPPLE (gl_texture_target, backbuffer_len, backbuffer_data);
+# endif // BACKBUFFER_OPENGL && !USE_IPHONE
 
   if (ob) {
     // Restore old bits, as much as possible, to the X11 upper left origin.
 
     CGRect rect;   // pixels, not points
     rect.origin.x = 0;
-    rect.origin.y = (backbuffer_size.height - osize.height);
+    rect.origin.y = (new_size.height - osize.height);
     rect.size = osize;
 
     CGImageRef img = CGBitmapContextCreateImage (ob);
     CGContextDrawImage (backbuffer, rect, img);
     CGImageRelease (img);
     CGContextRelease (ob);
+
+    if (olen)
+      // munmap should round len up to the nearest page.
+      munmap (odata, olen);
   }
+
+  check_gl_error ("createBackbuffer");
 }
 
-#endif // USE_BACKBUFFER
+
+- (void) drawBackbuffer
+{
+# ifdef BACKBUFFER_OPENGL
+
+  NSAssert ([ogl_ctx isKindOfClass:[NSOpenGLContext class]],
+            @"ogl_ctx is not an NSOpenGLContext");
+
+  NSAssert (! (CGBitmapContextGetBytesPerRow (backbuffer) % 4),
+            @"improperly-aligned backbuffer");
+
+  // This gets width and height from the backbuffer in case
+  // APPLE_client_storage is in use. See the note in createBackbuffer.
+  // This still has to happen every frame even when APPLE_client_storage has
+  // the video adapter pulling texture data straight from
+  // XScreenSaverView-owned memory.
+  glTexImage2D (gl_texture_target, 0, GL_RGBA,
+                (GLsizei)(CGBitmapContextGetBytesPerRow (backbuffer) / 4),
+                gl_texture_h, 0, gl_pixel_format, gl_pixel_type,
+                backbuffer_data);
+
+  GLfloat w = xwindow->frame.width, h = xwindow->frame.height;
+
+  GLfloat vertices[4][2] = {{-w,  h}, {w,  h}, {w, -h}, {-w, -h}};
+
+  GLfloat tex_coords[4][2];
+
+#  ifndef USE_IPHONE
+  if (gl_texture_target != GL_TEXTURE_RECTANGLE_EXT)
+#  endif // USE_IPHONE
+  {
+    w /= gl_texture_w;
+    h /= gl_texture_h;
+  }
+
+  tex_coords[0][0] = 0;
+  tex_coords[0][1] = 0;
+  tex_coords[1][0] = w;
+  tex_coords[1][1] = 0;
+  tex_coords[2][0] = w;
+  tex_coords[2][1] = h;
+  tex_coords[3][0] = 0;
+  tex_coords[3][1] = h;
+
+  glVertexPointer (2, GL_FLOAT, 0, vertices);
+  glTexCoordPointer (2, GL_FLOAT, 0, tex_coords);
+  glDrawArrays (GL_TRIANGLE_FAN, 0, 4);
+
+#  if !defined __OPTIMIZE__ || TARGET_IPHONE_SIMULATOR
+  check_gl_error ("drawBackbuffer");
+#  endif
+# endif // BACKBUFFER_OPENGL
+}
+
+#endif // JWXYZ_QUARTZ
+
+#ifdef JWXYZ_GL
+
+- (void)enableBackbuffer:(CGSize)new_backbuffer_size;
+{
+  jwxyz_set_matrices (new_backbuffer_size.width, new_backbuffer_size.height);
+  check_gl_error ("enableBackbuffer");
+}
+
+- (void)createBackbuffer:(CGSize)new_size
+{
+  NSAssert ([NSOpenGLContext currentContext] ==
+            ogl_ctx, @"invalid GL context");
+  NSAssert (xwindow->window.current_drawable == xwindow,
+            @"current_drawable not set properly");
+
+# ifndef USE_IPHONE
+  /* On iOS, Retina means glViewport gets called with the screen size instead
+     of the backbuffer/xwindow size. This happens in startAnimation.
+
+     The GL screenhacks call glViewport themselves.
+   */
+  glViewport (0, 0, new_size.width, new_size.height);
+# endif
+
+  // TODO: Preserve contents on resize.
+  glClear (GL_COLOR_BUFFER_BIT);
+  check_gl_error ("createBackbuffer");
+}
+
+#endif // JWXYZ_GL
+
+
+- (void)flushBackbuffer
+{
+# ifdef JWXYZ_GL
+  // Make sure the right context is active: there's two under JWXYZ_GL.
+  jwxyz_bind_drawable (xwindow, xwindow);
+# endif // JWXYZ_GL
+
+# ifndef USE_IPHONE
+
+#  ifdef JWXYZ_QUARTZ
+  // The OpenGL pipeline is not automatically synchronized with the contents
+  // of the backbuffer, so without glFinish, OpenGL can start rendering from
+  // the backbuffer texture at the same time that JWXYZ is clearing and
+  // drawing the next frame in the backing store for the backbuffer texture.
+  // This is only a concern under JWXYZ_QUARTZ because of
+  // APPLE_client_storage; JWXYZ_GL doesn't use that.
+  glFinish();
+#  endif // JWXYZ_QUARTZ
+
+  // If JWXYZ_GL was single-buffered, there would need to be a glFinish (or
+  // maybe just glFlush?) here, because single-buffered contexts don't always
+  // update what's on the screen after drawing finishes. (i.e., in safe mode)
+
+#  ifdef JWXYZ_QUARTZ
+  // JWXYZ_GL is always double-buffered.
+  if (double_buffered_p)
+#  endif // JWXYZ_QUARTZ
+    [ogl_ctx flushBuffer]; // despite name, this actually swaps
+# else // USE_IPHONE
+
+  // jwxyz_bind_drawable() only binds the framebuffer, not the renderbuffer.
+#  ifdef JWXYZ_GL
+  GLint gl_renderbuffer = xwindow->gl_renderbuffer;
+#  endif
+
+  glBindRenderbufferOES (GL_RENDERBUFFER_OES, gl_renderbuffer);
+  [ogl_ctx presentRenderbuffer:GL_RENDERBUFFER_OES];
+# endif // USE_IPHONE
+
+# if !defined __OPTIMIZE__ || TARGET_IPHONE_SIMULATOR
+  // glGetError waits for the OpenGL command pipe to flush, so skip it in
+  // release builds.
+  // OpenGL Programming Guide for Mac -> OpenGL Application Design
+  // Strategies -> Allow OpenGL to Manage Your Resources
+  // https://developer.apple.com/library/mac/documentation/GraphicsImaging/Conceptual/OpenGL-MacProgGuide/opengl_designstrategies/opengl_designstrategies.html#//apple_ref/doc/uid/TP40001987-CH2-SW7
+  check_gl_error ("flushBackbuffer");
+# endif
+}
 
 
 /* Inform X11 that the size of our window has changed.
  */
 - (void) resize_x11
 {
-  if (!xwindow) return;  // early
+  if (!xdpy) return;     // early
 
-  CGSize new_size;	// pixels, not points
+  NSSize new_size;	// pixels, not points
 
-# ifdef USE_BACKBUFFER
+  new_size = self.bounds.size;
+
 #  ifdef USE_IPHONE
-  CGSize rotsize = ((ignore_rotation_p || ![self reshapeRotatedWindow])
-                    ? initial_bounds
-                    : rot_current_size);
-  new_size.width  = rotsize.width;
-  new_size.height = rotsize.height;
-#  else  // !USE_IPHONE
-  new_size = NSSizeToCGSize([self bounds].size);
-#  endif // !USE_IPHONE
 
-  [self createBackbuffer:new_size];
-  jwxyz_window_resized (xdpy, xwindow, 0, 0, new_size.width, new_size.height,
-                        backbuffer);
-# else   // !USE_BACKBUFFER
-  new_size = [self bounds].size;
-  jwxyz_window_resized (xdpy, xwindow, 0, 0, new_size.width, new_size.height,
-                        0);
-# endif  // !USE_BACKBUFFER
+  // If this hack ignores rotation, then that means that it pretends to
+  // always be in portrait mode.  If the View has been resized to a 
+  // landscape shape, swap width and height to keep the backbuffer
+  // in portrait.
+  //
+  if ([self ignoreRotation] && new_size.width > new_size.height) {
+    CGFloat swap    = new_size.width;
+    new_size.width  = new_size.height;
+    new_size.height = swap;
+  }
 
-# if TARGET_IPHONE_SIMULATOR
+  double s = self.hackedContentScaleFactor;
+  new_size.width *= s;
+  new_size.height *= s;
+#  endif // USE_IPHONE
+
+  [self setViewport];
+
+  // On first resize, xwindow->frame is 0x0.
+  if (xwindow->frame.width == new_size.width &&
+      xwindow->frame.height == new_size.height)
+    return;
+
+  [self prepareContext];
+
+#  if defined(BACKBUFFER_OPENGL) && !defined(USE_IPHONE)
+  [ogl_ctx update];
+#  endif // BACKBUFFER_OPENGL && !USE_IPHONE
+
+  NSAssert (xwindow && xwindow->type == WINDOW, @"not a window");
+  xwindow->frame.x    = 0;
+  xwindow->frame.y    = 0;
+  xwindow->frame.width  = new_size.width;
+  xwindow->frame.height = new_size.height;
+
+  [self createBackbuffer:CGSizeMake(xwindow->frame.width,
+                                    xwindow->frame.height)];
+
+# if defined JWXYZ_QUARTZ
+  xwindow->cgc = backbuffer;
+  NSAssert (xwindow->cgc, @"no CGContext");
+# elif defined JWXYZ_GL && !defined USE_IPHONE
+  [ogl_ctx update];
+  [ogl_ctx setView:xwindow->window.view]; // (Is this necessary?)
+# endif // JWXYZ_GL && USE_IPHONE
+
+  jwxyz_window_resized (xdpy);
+
+# if !defined __OPTIMIZE__ || TARGET_IPHONE_SIMULATOR
   NSLog(@"reshape %.0fx%.0f", new_size.width, new_size.height);
 # endif
 
@@ -932,31 +1527,60 @@ double current_device_rotation (void)
 }
 
 
+#ifdef USE_IPHONE
+
+/* Called by SaverRunner when the device has changed orientation.
+   That means we need to generate a resize event, even if the size
+   has not changed (e.g., from LandscapeLeft to LandscapeRight).
+ */
+- (void) orientationChanged
+{
+  [self setViewport];
+  resized_p = YES;
+  next_frame_time = 0;  // Get a new frame on screen quickly
+}
+
+/* A hook run after the 'reshape_' method has been called.  Used by
+  XScreenSaverGLView to adjust the in-scene GL viewport.
+ */
+- (void) postReshape
+{
+}
+#endif // USE_IPHONE
+
+
+// Only render_x11 should call this.  XScreenSaverGLView specializes it.
+- (void) reshape_x11
+{
+  xsft->reshape_cb (xdpy, xwindow, xdata,
+                    xwindow->frame.width, xwindow->frame.height);
+}
+
 - (void) render_x11
 {
 # ifdef USE_IPHONE
   @try {
-
-  if (orientation == UIDeviceOrientationUnknown)
-    [self didRotate:nil];
-  [self hackRotation];
 # endif
+
+  // jwxyz_make_display needs this.
+  [self prepareContext]; // resize_x11 also calls this.
 
   if (!initted_p) {
 
     if (! xdpy) {
-# ifdef USE_BACKBUFFER
-      NSAssert (backbuffer, @"no back buffer");
-      xdpy = jwxyz_make_display (self, backbuffer);
-# else
-      xdpy = jwxyz_make_display (self, 0);
-# endif
-      xwindow = XRootWindow (xdpy, 0);
+# ifdef JWXYZ_QUARTZ
+      xwindow->cgc = backbuffer;
+# endif // JWXYZ_QUARTZ
+      xdpy = jwxyz_make_display (xwindow);
 
-# ifdef USE_IPHONE
+# if defined USE_IPHONE
       /* Some X11 hacks (fluidballs) want to ignore all rotation events. */
-      ignore_rotation_p =
+      _ignoreRotation =
+#  ifdef JWXYZ_GL
+        TRUE; // Rotation doesn't work yet. TODO: Make rotation work.
+#  else  // !JWXYZ_GL
         get_boolean_resource (xdpy, "ignoreRotation", "IgnoreRotation");
+#  endif // !JWXYZ_GL
 # endif // USE_IPHONE
 
       [self resize_x11];
@@ -1014,6 +1638,11 @@ double current_device_rotation (void)
       xsft->fps_cb = 0;
     }
 
+# ifdef USE_IPHONE
+    if (current_device_rotation() != 0)   // launched while rotated
+      resized_p = YES;
+# endif
+
     [self checkForUpdates];
   }
 
@@ -1039,6 +1668,14 @@ double current_device_rotation (void)
     }
 
 
+  /* Run any XtAppAddInput and XtAppAddTimeOut callbacks now.
+     Do this before delaying for next_frame_time to avoid throttling
+     timers to the hack's frame rate.
+   */
+  XtAppProcessEvent (XtDisplayToApplicationContext (xdpy),
+                     XtIMTimer | XtIMAlternateInput);
+
+
   /* It turns out that on some systems (possibly only 10.5 and older?)
      [ScreenSaverView setAnimationTimeInterval] does nothing.  This means
      that we cannot rely on it.
@@ -1056,7 +1693,7 @@ double current_device_rotation (void)
      an animation interval that is faster than animationTimeInterval.
 
      HOWEVER!  On modern systems where setAnimationTimeInterval is *not*
-     ignored, it's important that it be faster than 30 FPS.  120 FPS is good.
+     ignored, it's important that it be faster than 30 FPS.  240 FPS is good.
 
      An NSTimer won't fire if the timer is already running the invocation
      function from a previous firing.  So, if we use a 30 FPS
@@ -1069,7 +1706,7 @@ double current_device_rotation (void)
      integer, i.e. 30 FPS, 15 FPS, 10, 7.5, 6. And the 'snapped' frame rate
      is rounded down from what it would normally be.
 
-     So if we set animationTimeInterval to 1/120 instead of 1/30, frame rates
+     So if we set animationTimeInterval to 1/240 instead of 1/30, frame rates
      become values of 60/N, 120/N, or 240/N, with coarser or finer frame rate
      steps for higher or lower animation time intervals respectively.
    */
@@ -1077,50 +1714,40 @@ double current_device_rotation (void)
   gettimeofday (&tv, 0);
   double now = tv.tv_sec + (tv.tv_usec / 1000000.0);
   if (now < next_frame_time) return;
-  
-  [self prepareContext];
+
+  // [self flushBackbuffer];
 
   if (resized_p) {
     // We do this here instead of in setFrame so that all the
     // Xlib drawing takes place under the animation timer.
-    [self resizeContext];
-    NSRect r;
-# ifndef USE_BACKBUFFER
-    r = [self bounds];
-# else  // USE_BACKBUFFER
-    r.origin.x = 0;
-    r.origin.y = 0;
-    r.size.width  = backbuffer_size.width;
-    r.size.height = backbuffer_size.height;
-# endif // USE_BACKBUFFER
 
-    xsft->reshape_cb (xdpy, xwindow, xdata, r.size.width, r.size.height);
+# ifndef USE_IPHONE
+    if (ogl_ctx)
+      [ogl_ctx setView:self];
+# endif // !USE_IPHONE
+
+    [self reshape_x11];
     resized_p = NO;
   }
-
-  // Run any XtAppAddInput callbacks now.
-  // (Note that XtAppAddTimeOut callbacks have already been run by
-  // the Cocoa event loop.)
-  //
-  jwxyz_sources_run (display_sources_data (xdpy));
 
 
   // And finally:
   //
-# ifndef USE_IPHONE
-  NSDisableScreenUpdates();
-# endif
   // NSAssert(xdata, @"no xdata when drawing");
   if (! xdata) abort();
   unsigned long delay = xsft->draw_cb (xdpy, xwindow, xdata);
-  if (fpst) xsft->fps_cb (xdpy, xwindow, fpst, xdata);
-# ifndef USE_IPHONE
-  NSEnableScreenUpdates();
-# endif
+  if (fpst && xsft->fps_cb)
+    xsft->fps_cb (xdpy, xwindow, fpst, xdata);
 
   gettimeofday (&tv, 0);
   now = tv.tv_sec + (tv.tv_usec / 1000000.0);
   next_frame_time = now + (delay / 1000000.0);
+
+# ifdef JWXYZ_QUARTZ
+  [self drawBackbuffer];
+# endif
+  // This can also happen near the beginning of render_x11.
+  [self flushBackbuffer];
 
 # ifdef USE_IPHONE	// Allow savers on the iPhone to run full-tilt.
   if (delay < [self animationTimeInterval])
@@ -1166,167 +1793,27 @@ double current_device_rotation (void)
 }
 
 
-/* drawRect always does nothing, and animateOneFrame renders bits to the
-   screen.  This is (now) true of both X11 and GL on both MacOS and iOS.
- */
-
-- (void)drawRect:(NSRect)rect
-{
-  if (xwindow)    // clear to the X window's bg color, not necessarily black.
-    XClearWindow (xdpy, xwindow);
-  else
-    [super drawRect:rect];    // early: black.
-}
-
-
-#ifndef USE_BACKBUFFER
-
-- (void) animateOneFrame
-{
-  [self render_x11];
-  jwxyz_flush_context(xdpy);
-}
-
-#else  // USE_BACKBUFFER
-
 - (void) animateOneFrame
 {
   // Render X11 into the backing store bitmap...
 
+# ifdef JWXYZ_QUARTZ
   NSAssert (backbuffer, @"no back buffer");
 
-# ifdef USE_IPHONE
+#  ifdef USE_IPHONE
   UIGraphicsPushContext (backbuffer);
-# endif
+#  endif
+# endif // JWXYZ_QUARTZ
 
   [self render_x11];
 
-# ifdef USE_IPHONE
+# if defined USE_IPHONE && defined JWXYZ_QUARTZ
   UIGraphicsPopContext();
 # endif
-
-# ifdef USE_IPHONE
-  // The rotation origin for layer.affineTransform is in the center already.
-  CGAffineTransform t = ignore_rotation_p ?
-    CGAffineTransformIdentity :
-    CGAffineTransformMakeRotation (rot_current_angle / (180.0 / M_PI));
-
-  // Ratio of backbuffer size in pixels to layer size in points.
-  CGSize ssize = backbuffer_size;
-  CGSize bsize = [self bounds].size;
-  GLfloat s = ((ssize.width > ssize.height ? ssize.width : ssize.height) /
-               (bsize.width > bsize.height ? bsize.width : bsize.height));
-
-  self.layer.contentsScale = s;
-  self.layer.affineTransform = t;
-
-  /* Setting the layer's bounds also sets the view's bounds.
-     The view's bounds must be in points, not pixels, and it
-     must be rotated to the current orientation.
-   */
-  CGRect bounds;
-  bounds.origin.x = 0;
-  bounds.origin.y = 0;
-  bounds.size.width  = ssize.width  / s;
-  bounds.size.height = ssize.height / s;
-  self.layer.bounds = bounds;
-
-# endif // USE_IPHONE
- 
-# if defined(BACKBUFFER_CALAYER)
-  [self.layer setNeedsDisplay];
-# elif defined(BACKBUFFER_CGCONTEXT)
-  size_t
-    w = CGBitmapContextGetWidth (backbuffer),
-    h = CGBitmapContextGetHeight (backbuffer);
-  
-  size_t bpl = CGBitmapContextGetBytesPerRow (backbuffer);
-  CGDataProviderRef prov = CGDataProviderCreateWithData (NULL,
-                                            CGBitmapContextGetData(backbuffer),
-                                                         bpl * h,
-                                                         NULL);
-
-
-  CGImageRef img = CGImageCreate (w, h,
-                                  8, 32,
-                                  CGBitmapContextGetBytesPerRow(backbuffer),
-                                  colorspace,
-                                  CGBitmapContextGetBitmapInfo(backbuffer),
-                                  prov, NULL, NO,
-                                  kCGRenderingIntentDefault);
-
-  CGDataProviderRelease (prov);
-  
-  CGRect rect;
-  rect.origin.x = 0;
-  rect.origin.y = 0;
-  rect.size = backbuffer_size;
-  CGContextDrawImage (window_ctx, rect, img);
-  
-  CGImageRelease (img);
-
-  CGContextFlush (window_ctx);
-# endif // BACKBUFFER_CGCONTEXT
 }
 
-# ifdef BACKBUFFER_CALAYER
 
-- (void) drawLayer:(CALayer *)layer inContext:(CGContextRef)ctx
-{
-  // This "isn't safe" if NULL is passed to CGBitmapCreateContext before iOS 4.
-  char *dest_data = (char *)CGBitmapContextGetData (ctx);
-
-  // The CGContext here is normally upside-down on iOS.
-  if (dest_data &&
-      CGBitmapContextGetBitmapInfo (ctx) ==
-        (kCGImageAlphaNoneSkipFirst | kCGBitmapByteOrder32Host)
-#  ifdef USE_IPHONE
-      && CGContextGetCTM (ctx).d < 0
-#  endif // USE_IPHONE
-      )
-  {
-    size_t dest_height = CGBitmapContextGetHeight (ctx);
-    size_t dest_bpr = CGBitmapContextGetBytesPerRow (ctx);
-    size_t src_height = CGBitmapContextGetHeight (backbuffer);
-    size_t src_bpr = CGBitmapContextGetBytesPerRow (backbuffer);
-    char *src_data = (char *)CGBitmapContextGetData (backbuffer);
-
-    size_t height = src_height < dest_height ? src_height : dest_height;
-    
-    if (src_bpr == dest_bpr) {
-      // iPad 1: 4.0 ms, iPad 2: 6.7 ms
-      memcpy (dest_data, src_data, src_bpr * height);
-    } else {
-      // iPad 1: 4.6 ms, iPad 2: 7.2 ms
-      size_t bpr = src_bpr < dest_bpr ? src_bpr : dest_bpr;
-      while (height) {
-        memcpy (dest_data, src_data, bpr);
-        --height;
-        src_data += src_bpr;
-        dest_data += dest_bpr;
-      }
-    }
-  } else {
-
-    // iPad 1: 9.6 ms, iPad 2: 12.1 ms
-
-#  ifdef USE_IPHONE
-    CGContextScaleCTM (ctx, 1, -1);
-    CGFloat s = [self contentScaleFactor];
-    CGFloat hs = [self hackedContentScaleFactor];
-    CGContextTranslateCTM (ctx, 0, -backbuffer_size.height * hs / s);
-#  endif // USE_IPHONE
-    
-    CGImageRef img = CGBitmapContextCreateImage (backbuffer);
-    CGContextDrawImage (ctx, self.layer.bounds, img);
-    CGImageRelease (img);
-  }
-}
-# endif  // BACKBUFFER_CALAYER
-
-#endif // USE_BACKBUFFER
-
-
+# ifndef USE_IPHONE  // Doesn't exist on iOS
 
 - (void) setFrame:(NSRect) newRect
 {
@@ -1336,15 +1823,24 @@ double current_device_rotation (void)
     [self resize_x11];
 }
 
-
-# ifndef USE_IPHONE  // Doesn't exist on iOS
 - (void) setFrameSize:(NSSize) newSize
 {
   [super setFrameSize:newSize];
   if (xwindow)
     [self resize_x11];
 }
-# endif // !USE_IPHONE
+
+# else // USE_IPHONE
+
+- (void) layoutSubviews
+{
+  [super layoutSubviews];
+  [self resizeGL];
+  if (xwindow)
+    [self resize_x11];
+}
+
+# endif
 
 
 +(BOOL) performGammaFade
@@ -1387,7 +1883,10 @@ double current_device_rotation (void)
                  ret, (zs.msg ? zs.msg : "<null>"));
   }
 
-  return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+  NSString *s = [[NSString alloc]
+                  initWithData:data encoding:NSUTF8StringEncoding];
+  [s autorelease];
+  return s;
 }
 
 
@@ -1571,6 +2070,18 @@ double current_device_rotation (void)
             case NSNextFunctionKey:       k = XK_Next;      break;
             case NSBeginFunctionKey:      k = XK_Begin;     break;
             case NSEndFunctionKey:        k = XK_End;       break;
+            case NSF1FunctionKey:	  k = XK_F1;	    break;
+            case NSF2FunctionKey:	  k = XK_F2;	    break;
+            case NSF3FunctionKey:	  k = XK_F3;	    break;
+            case NSF4FunctionKey:	  k = XK_F4;	    break;
+            case NSF5FunctionKey:	  k = XK_F5;	    break;
+            case NSF6FunctionKey:	  k = XK_F6;	    break;
+            case NSF7FunctionKey:	  k = XK_F7;	    break;
+            case NSF8FunctionKey:	  k = XK_F8;	    break;
+            case NSF9FunctionKey:	  k = XK_F9;	    break;
+            case NSF10FunctionKey:	  k = XK_F10;	    break;
+            case NSF11FunctionKey:	  k = XK_F11;	    break;
+            case NSF12FunctionKey:	  k = XK_F12;	    break;
             default:
               {
                 const char *s =
@@ -1662,6 +2173,68 @@ double current_device_rotation (void)
     [super flagsChanged:e];
 }
 
+
+- (NSOpenGLPixelFormat *) getGLPixelFormat
+{
+  NSAssert (prefsReader, @"no prefsReader for getGLPixelFormat");
+
+  NSOpenGLPixelFormatAttribute attrs[40];
+  int i = 0;
+  attrs[i++] = NSOpenGLPFAColorSize; attrs[i++] = 24;
+
+/* OpenGL's core profile removes a lot of the same stuff that was removed in
+   OpenGL ES (e.g. glBegin, glDrawPixels), so it might be a possibility.
+
+  opengl_core_p = True;
+  if (opengl_core_p) {
+    attrs[i++] = NSOpenGLPFAOpenGLProfile;
+    attrs[i++] = NSOpenGLProfileVersion3_2Core;
+  }
+ */
+
+/* Eventually: multisampled pixmaps. May not be supported everywhere.
+   if (multi_sample_p) {
+     attrs[i++] = NSOpenGLPFASampleBuffers; attrs[i++] = 1;
+     attrs[i++] = NSOpenGLPFASamples;       attrs[i++] = 6;
+   }
+ */
+
+# ifdef JWXYZ_QUARTZ
+  // Under Quartz, we're just blitting a texture.
+  if (double_buffered_p)
+    attrs[i++] = NSOpenGLPFADoubleBuffer;
+# endif
+
+# ifdef JWXYZ_GL
+  /* Under OpenGL, all sorts of drawing commands are being issued, and it might
+     be a performance problem if this activity occurs on the front buffer.
+     Also, some screenhacks expect OS X/iOS to always double-buffer.
+     NSOpenGLPFABackingStore prevents flickering with screenhacks that
+     don't redraw the entire screen every frame.
+   */
+  attrs[i++] = NSOpenGLPFADoubleBuffer;
+  attrs[i++] = NSOpenGLPFABackingStore;
+# endif
+
+  attrs[i++] = NSOpenGLPFAWindow;
+# ifdef JWXYZ_GL
+  attrs[i++] = NSOpenGLPFAPixelBuffer;
+  /* ...But not NSOpenGLPFAFullScreen, because that would be for
+     [NSOpenGLContext setFullScreen].
+   */
+# endif
+
+  /* NSOpenGLPFAFullScreen would go here if initWithFrame's isPreview == NO.
+   */
+
+  attrs[i] = 0;
+
+  NSOpenGLPixelFormat *p = [[NSOpenGLPixelFormat alloc]
+                             initWithAttributes:attrs];
+  [p autorelease];
+  return p;
+}
+
 #else  // USE_IPHONE
 
 
@@ -1682,192 +2255,14 @@ double current_device_rotation (void)
 //  }
   [self resignFirstResponder];
 
-  // Find SaverRunner.window (as opposed to SaverRunner.saverWindow)
-  UIWindow *listWindow = 0;
-  for (UIWindow *w in [[UIApplication sharedApplication] windows]) {
-    if (w != [self window]) {
-      listWindow = w;
-      break;
-    }
-  }
-
-  UIView *fader = [self superview];  // the "backgroundView" view is our parent
-
   if (relaunch_p) {   // Fake a shake on the SaverListController.
-    UIViewController *v = [listWindow rootViewController];
-    if ([v isKindOfClass: [UINavigationController class]]) {
-# if TARGET_IPHONE_SIMULATOR
-      NSLog (@"simulating shake on saver list");
-# endif
-      UINavigationController *n = (UINavigationController *) v;
-      [[n topViewController] motionEnded: UIEventSubtypeMotionShake
-                               withEvent: nil];
-    }
+    [_delegate didShake:self];
   } else {	// Not launching another, animate our return to the list.
-# if TARGET_IPHONE_SIMULATOR
+# if !defined __OPTIMIZE__ || TARGET_IPHONE_SIMULATOR
     NSLog (@"fading back to saver list");
 # endif
-    UIWindow *saverWindow = [self window]; // not SaverRunner.window
-    [listWindow setHidden:NO];
-    [UIView animateWithDuration: 0.5
-            animations:^{ fader.alpha = 0.0; }
-            completion:^(BOOL finished) {
-               [fader removeFromSuperview];
-               fader.alpha = 1.0;
-               [saverWindow setHidden:YES];
-               [listWindow makeKeyAndVisible];
-               [[[listWindow rootViewController] view] becomeFirstResponder];
-            }];
+    [_delegate wantsFadeOut:self];
   }
-}
-
-
-/* Whether the shape of the X11 Window should be changed to HxW when the
-   device is in a landscape orientation.  X11 hacks want this, but OpenGL
-   hacks do not.
- */
-- (BOOL)reshapeRotatedWindow
-{
-  return YES;
-}
-
-
-/* Called after the device's orientation has changed.
-   
-   Rotation is complicated: the UI, X11 and OpenGL work in 3 different ways.
-
-   The UI (list of savers, preferences panels) is rotated by the system,
-   because its UIWindow is under a UINavigationController that does
-   automatic rotation, using Core Animation.
-
-   The savers are under a different UIWindow and a UINavigationController
-   that does not do automatic rotation.
-
-   We have to do it this way for OpenGL savers because using Core Animation
-   on an EAGLContext causes the OpenGL pipeline to fall back on software
-   rendering and performance goes to hell.
-
-   For X11-only savers, we could just use Core Animation and let the system
-   handle it, but (maybe) it's simpler to do it the same way for X11 and GL.
-
-   During and after rotation, the size/shape of the X11 window changes,
-   and ConfigureNotify events are generated.
-
-   X11 code (jwxyz) continues to draw into the (reshaped) backbuffer, which
-   rotated at the last minute via a CGAffineTransformMakeRotation when it is
-   copied to the display hardware.
-
-   GL code always recieves a portrait-oriented X11 Window whose size never
-   changes.  The GL COLOR_BUFFER is displayed on the hardware directly and
-   unrotated, so the GL hacks themselves are responsible for rotating the
-   GL scene to match current_device_rotation().
-
-   Touch events are converted to mouse clicks, and those XEvent coordinates
-   are reported in the coordinate system currently in use by the X11 window.
-   Again, GL must convert those.
- */
-- (void)didRotate:(NSNotification *)notification
-{
-  UIDeviceOrientation current = [[UIDevice currentDevice] orientation];
-
-  /* If the simulator starts up in the rotated position, sometimes
-     the UIDevice says we're in Portrait when we're not -- but it
-     turns out that the UINavigationController knows what's up!
-     So get it from there.
-   */
-  if (current == UIDeviceOrientationUnknown) {
-    switch ([[[self window] rootViewController] interfaceOrientation]) {
-    case UIInterfaceOrientationPortrait:
-      current = UIDeviceOrientationPortrait;
-      break;
-    case UIInterfaceOrientationPortraitUpsideDown:
-      current = UIDeviceOrientationPortraitUpsideDown;
-      break;
-    /* It's opposite day, "because rotating the device to the left requires
-       rotating the content to the right" */
-    case UIInterfaceOrientationLandscapeLeft:
-      current = UIDeviceOrientationLandscapeRight;
-      break;
-    case UIInterfaceOrientationLandscapeRight:
-      current = UIDeviceOrientationLandscapeLeft;
-      break;
-    default:
-      break;
-    }
-  }
-
-  /* On the iPad (but not iPhone 3GS, or the simulator) sometimes we get
-     an orientation change event with an unknown orientation.  Those seem
-     to always be immediately followed by another orientation change with
-     a *real* orientation change, so let's try just ignoring those bogus
-     ones and hoping that the real one comes in shortly...
-   */
-  if (current == UIDeviceOrientationUnknown)
-    return;
-
-  if (rotation_ratio >= 0) return;	// in the midst of rotation animation
-  if (orientation == current) return;	// no change
-
-  // When transitioning to FaceUp or FaceDown, pretend there was no change.
-  if (current == UIDeviceOrientationFaceUp ||
-      current == UIDeviceOrientationFaceDown)
-    return;
-
-  new_orientation = current;		// current animation target
-  rotation_ratio = 0;			// start animating
-  rot_start_time = double_time();
-
-  switch (orientation) {
-  case UIDeviceOrientationLandscapeLeft:      angle_from = 90;  break;
-  case UIDeviceOrientationLandscapeRight:     angle_from = 270; break;
-  case UIDeviceOrientationPortraitUpsideDown: angle_from = 180; break;
-  default:                                    angle_from = 0;   break;
-  }
-
-  switch (new_orientation) {
-  case UIDeviceOrientationLandscapeLeft:      angle_to = 90;  break;
-  case UIDeviceOrientationLandscapeRight:     angle_to = 270; break;
-  case UIDeviceOrientationPortraitUpsideDown: angle_to = 180; break;
-  default:                                    angle_to = 0;   break;
-  }
-
-  switch (orientation) {
-  case UIDeviceOrientationLandscapeRight:	// from landscape
-  case UIDeviceOrientationLandscapeLeft:
-    rot_from.width  = initial_bounds.height;
-    rot_from.height = initial_bounds.width;
-    break;
-  default:					// from portrait
-    rot_from.width  = initial_bounds.width;
-    rot_from.height = initial_bounds.height;
-    break;
-  }
-
-  switch (new_orientation) {
-  case UIDeviceOrientationLandscapeRight:	// to landscape
-  case UIDeviceOrientationLandscapeLeft:
-    rot_to.width  = initial_bounds.height;
-    rot_to.height = initial_bounds.width;
-    break;
-  default:					// to portrait
-    rot_to.width  = initial_bounds.width;
-    rot_to.height = initial_bounds.height;
-    break;
-  }
-
-# if TARGET_IPHONE_SIMULATOR
-  NSLog (@"rotation begun: %s %d -> %s %d; %d x %d",
-         orientname(orientation), (int) rot_current_angle,
-         orientname(new_orientation), (int) angle_to,
-         (int) rot_current_size.width, (int) rot_current_size.height);
-# endif
-
- if (! initted_p) {
-   // If we've done a rotation but the saver hasn't been initialized yet,
-   // don't bother going through an X11 resize, but just do it now.
-   rot_start_time = 0;  // dawn of time
-   [self hackRotation];
- }
 }
 
 
@@ -1942,39 +2337,114 @@ double current_device_rotation (void)
 
 /* Given a mouse (touch) coordinate in unrotated, unscaled view coordinates,
    convert it to what X11 and OpenGL expect.
- */
-- (void) convertMouse:(int)rot x:(int*)x y:(int *)y
-{
-  int w = [self frame].size.width;
-  int h = [self frame].size.height;
-  int xx = *x, yy = *y;
-  int swap;
 
-  if (ignore_rotation_p) {
-    // We need to rotate the coordinates to match the unrotated X11 window.
-    switch (orientation) {
-    case UIDeviceOrientationLandscapeRight:
-      swap = xx; xx = h-yy; yy = swap;
-      break;
-    case UIDeviceOrientationLandscapeLeft:
-      swap = xx; xx = yy; yy = w-swap;
-      break;
-    case UIDeviceOrientationPortraitUpsideDown: 
-      xx = w-xx; yy = h-yy;
-    default:
-      break;
+   Getting this crap right is tricky, given the confusion of the various
+   scale factors, so here's a checklist that I think covers all of the X11
+   and OpenGL cases. For each of these: rotate to all 4 orientations;
+   ensure the mouse tracks properly to all 4 corners.
+
+   Test it in Xcode 6, because Xcode 5.0.2 can't run the iPhone6+ simulator.
+
+   Test hacks must cover:
+     X11 ignoreRotation = true
+     X11 ignoreRotation = false
+     OpenGL (rotation is handled manually, so they never ignoreRotation)
+
+   Test devices must cover:
+     contentScaleFactor = 1, hackedContentScaleFactor = 1 (iPad 2)
+     contentScaleFactor = 2, hackedContentScaleFactor = 1 (iPad Retina Air)
+     contentScaleFactor = 2, hackedContentScaleFactor = 2 (iPhone 5 5s 6 6+)
+
+     iPad 2:    768x1024 / 1 = 768x1024
+     iPad Air: 1536x2048 / 2 = 768x1024 (iPad Retina is identical)
+     iPhone 4s:  640x960 / 2 = 320x480
+     iPhone 5:  640x1136 / 2 = 320x568 (iPhone 5s and iPhone 6 are identical)
+     iPhone 6+: 640x1136 / 2 = 320x568 (nativeBounds 960x1704 nativeScale 3)
+   
+   Tests:
+		      iPad2 iPadAir iPhone4s iPhone5 iPhone6+
+     Attraction	X  yes	-	-	-	-	Y
+     Fireworkx	X  no	-	-	-	-	Y
+     Carousel	GL yes	-	-	-	-	Y
+     Voronoi	GL no	-	-	-	-	-
+ */
+- (void) convertMouse:(CGPoint *)p
+{
+  CGFloat xx = p->x, yy = p->y;
+
+# if TARGET_IPHONE_SIMULATOR
+  {
+    XWindowAttributes xgwa;
+    XGetWindowAttributes (xdpy, xwindow, &xgwa);
+    NSLog (@"TOUCH %4g, %-4g in %4d x %-4d  cs=%.0f hcs=%.0f r=%d ig=%d\n",
+           p->x, p->y,
+           xgwa.width, xgwa.height,
+           [self contentScaleFactor],
+           [self hackedContentScaleFactor],
+           [self rotateTouches], [self ignoreRotation]);
+  }
+# endif // TARGET_IPHONE_SIMULATOR
+
+  if ([self rotateTouches]) {
+
+    // The XScreenSaverGLView case:
+    // The X11 window is rotated, as is the framebuffer.
+    // The device coordinates match the framebuffer dimensions,
+    // but might have axes swapped... and we need to swap them
+    // by ratios.
+    //
+    int w = [self frame].size.width;
+    int h = [self frame].size.height;
+    GLfloat xr = (GLfloat) xx / w;
+    GLfloat yr = (GLfloat) yy / h;
+    GLfloat swap;
+    int o = (int) current_device_rotation();
+    switch (o) {
+    case -90: case  270: swap = xr; xr = 1-yr; yr = swap;   break;
+    case  90: case -270: swap = xr; xr = yr;   yr = 1-swap; break;
+    case 180: case -180:            xr = 1-xr; yr = 1-yr;   break;
+    default: break;
+    }
+    xx = xr * w;
+    yy = yr * h;
+
+  } else if ([self ignoreRotation]) {
+
+    // The X11 case, where the hack has opted not to rotate:
+    // The X11 window is unrotated, but the framebuffer is rotated.
+    // The device coordinates match the framebuffer, so they need to
+    // be de-rotated to match the X11 window.
+    //
+    int w = [self frame].size.width;
+    int h = [self frame].size.height;
+    int swap;
+    int o = (int) current_device_rotation();
+    switch (o) {
+    case -90: case  270: swap = xx; xx = h-yy; yy = swap;   break;
+    case  90: case -270: swap = xx; xx = yy;   yy = w-swap; break;
+    case 180: case -180:            xx = w-xx; yy = h-yy;   break;
+    default: break;
     }
   }
 
-  double s = [self contentScaleFactor];
-  *x = xx * s;
-  *y = yy * s;
+  double s = [self hackedContentScaleFactor];
+  p->x = xx * s;
+  p->y = yy * s;
 
-# if TARGET_IPHONE_SIMULATOR
-  NSLog (@"touch %4d, %-4d in %4d x %-4d  %d %d\n",
-         *x, *y, (int)(w*s), (int)(h*s),
-         ignore_rotation_p, [self reshapeRotatedWindow]);
-# endif
+# if TARGET_IPHONE_SIMULATOR || !defined __OPTIMIZE__
+  {
+    XWindowAttributes xgwa;
+    XGetWindowAttributes (xdpy, xwindow, &xgwa);
+    NSLog (@"touch %4g, %-4g in %4d x %-4d  cs=%.0f hcs=%.0f r=%d ig=%d\n",
+           p->x, p->y,
+           xgwa.width, xgwa.height,
+           [self contentScaleFactor],
+           [self hackedContentScaleFactor],
+           [self rotateTouches], [self ignoreRotation]);
+    if (p->x < 0 || p->y < 0 || p->x > xgwa.width || p->y > xgwa.height)
+      abort();
+  }
+# endif // TARGET_IPHONE_SIMULATOR
 }
 
 
@@ -2014,30 +2484,30 @@ double current_device_rotation (void)
   memset (&xe, 0, sizeof(xe));
 
   CGPoint p = [sender locationInView:self];  // this is in points, not pixels
-  int x = p.x;
-  int y = p.y;
-  [self convertMouse: rot_current_angle x:&x y:&y];
-  jwxyz_mouse_moved (xdpy, xwindow, x, y);
+  [self convertMouse:&p];
+  NSAssert (xwindow && xwindow->type == WINDOW, @"not a window");
+  xwindow->window.last_mouse_x = p.x;
+  xwindow->window.last_mouse_y = p.y;
 
   switch (sender.state) {
   case UIGestureRecognizerStateBegan:
     xe.xany.type = ButtonPress;
     xe.xbutton.button = 1;
-    xe.xbutton.x = x;
-    xe.xbutton.y = y;
+    xe.xbutton.x = p.x;
+    xe.xbutton.y = p.y;
     break;
 
   case UIGestureRecognizerStateEnded:
     xe.xany.type = ButtonRelease;
     xe.xbutton.button = 1;
-    xe.xbutton.x = x;
-    xe.xbutton.y = y;
+    xe.xbutton.x = p.x;
+    xe.xbutton.y = p.y;
     break;
 
   case UIGestureRecognizerStateChanged:
     xe.xany.type = MotionNotify;
-    xe.xmotion.x = x;
-    xe.xmotion.y = y;
+    xe.xmotion.x = p.x;
+    xe.xmotion.y = p.y;
     break;
 
   default:
@@ -2073,14 +2543,12 @@ double current_device_rotation (void)
   memset (&xe, 0, sizeof(xe));
 
   CGPoint p = [sender locationInView:self];  // this is in points, not pixels
-  int x = p.x;
-  int y = p.y;
-  [self convertMouse: rot_current_angle x:&x y:&y];
+  [self convertMouse:&p];
 
-  if (abs(x) > abs(y))
-    xe.xkey.keycode = (x > 0 ? XK_Right : XK_Left);
+  if (fabs(p.x) > fabs(p.y))
+    xe.xkey.keycode = (p.x > 0 ? XK_Right : XK_Left);
   else
-    xe.xkey.keycode = (y > 0 ? XK_Down : XK_Up);
+    xe.xkey.keycode = (p.y > 0 ? XK_Down : XK_Up);
 
   BOOL ok1 = [self sendEvent: &xe];
   xe.xany.type = KeyRelease;
@@ -2125,6 +2593,31 @@ double current_device_rotation (void)
     if (! [self isAnimating])
       [self startAnimation];
   }
+}
+
+- (NSDictionary *)getGLProperties
+{
+  return [NSDictionary dictionaryWithObjectsAndKeys:
+          kEAGLColorFormatRGBA8, kEAGLDrawablePropertyColorFormat,
+# ifdef JWXYZ_GL
+          /* This could be disabled if we knew the screen would be redrawn
+             entirely for every frame.
+           */
+          [NSNumber numberWithBool:YES], kEAGLDrawablePropertyRetainedBacking,
+# endif // JWXYZ_GL
+          nil];
+}
+
+- (void)addExtraRenderbuffers:(CGSize)size
+{
+  // No extra renderbuffers are needed for 2D screenhacks.
+}
+ 
+
+- (NSString *)getCAGravity
+{
+  return kCAGravityCenter;  // Looks better in e.g. Compass.
+//  return kCAGravityBottomLeft;
 }
 
 #endif // USE_IPHONE
@@ -2188,7 +2681,7 @@ double current_device_rotation (void)
                    options:(NSWorkspaceLaunchWithoutAddingToRecents |
                             NSWorkspaceLaunchWithoutActivation |
                             NSWorkspaceLaunchAndHide)
-                   configuration:nil
+                   configuration:[NSMutableDictionary dictionary]
                    error:&err]) {
     NSLog(@"Unable to launch %@: %@", app_path, err);
   }

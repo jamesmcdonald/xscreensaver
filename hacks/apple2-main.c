@@ -35,8 +35,6 @@
 #define SCREEN_COLS 40
 #define SCREEN_ROWS 24
 
-#define DEBUG
-
 
 /* Given a bitmask, returns the position and width of the field.
  */
@@ -1315,7 +1313,7 @@ a2_vt100_printc (apple2_sim_t *sim, struct terminal_controller_data *state,
             free (s);
             goto PRINT;
           } else {
-            c = 0;
+            /* c = 0; */
           }
         }
       }
@@ -1870,7 +1868,7 @@ apple2_draw (Display *dpy, Window window, void *closure)
     st->sim = 0;
   }
 
-#ifdef USE_IPHONE
+#ifdef HAVE_MOBILE
   return 0;
 #else
   return 5000;

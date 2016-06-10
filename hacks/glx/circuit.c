@@ -11,7 +11,7 @@
  *                    surface mount, to-92 markings. Fixed ~5min crash.
  *                    Better LED illumination. Other minor changes.
  *
- * Copyright (C) 2001,2002 Ben Buxton (bb@cactii.net)
+ * Copyright (C) 2001-2015 Ben Buxton (bb@cactii.net)
  *
  * Permission to use, copy, modify, distribute, and sell this software and its
  * documentation for any purpose is hereby granted without fee, provided that
@@ -32,6 +32,7 @@
 #ifdef STANDALONE
 #define DEFAULTS        "*delay:   20000 \n" \
                         "*showFPS: False \n" \
+			"*suppressRotationAnimation: True\n" \
                "*componentFont: -*-courier-bold-r-normal-*-*-140-*-*-*-*-*-*"
 
 # define refresh_circuit 0
@@ -1037,7 +1038,6 @@ static int DrawIC(Circuit *ci, IC *c)
   GLfloat lspec[] = {0.6, 0.6, 0.6, 0};
   GLfloat lcol[] = {0.4, 0.4, 0.4, 0};
   GLfloat lshine = 40;
-  float th, size;
 
   glPushMatrix();
   glMaterialfv(GL_FRONT, GL_AMBIENT_AND_DIFFUSE, col);
@@ -1103,17 +1103,12 @@ static int DrawIC(Circuit *ci, IC *c)
     glDisable(GL_POLYGON_OFFSET_FILL);
     glEnable(GL_TEXTURE_2D);
     glEnable(GL_BLEND);
-    if (c->pins == 8)
-      size = 0.4;
-    else
-      size = 0.6;
-    th = size*2/3;
 
     {
       GLfloat texfg[] = {0.7, 0.7, 0.7, 1.0};
       GLfloat s = 0.015;
-      int w, h;
-      w = texture_string_width (ci->font, c->text, &h);
+      XCharStruct e;
+      texture_string_metrics (ci->font, c->text, &e, 0, 0);
 
       glPushMatrix();
       glTranslatef (0, 0, 0.1);
@@ -1352,9 +1347,10 @@ static int DrawTransistor(Circuit *ci, Transistor *t)
     {
       GLfloat texfg[] = {0.7, 0.7, 0.7, 1.0};
       GLfloat s = 0.015;
-      int w, h;
-      w = texture_string_width (ci->font, t->text, &h);
-
+      XCharStruct e;
+      int w;
+      texture_string_metrics (ci->font, t->text, &e, 0, 0);
+      w = e.width;
       glPushMatrix();
       glRotatef (90, 1, 0, 0);
       glTranslatef (0.5, -0.05, 0.21);
@@ -1379,9 +1375,10 @@ static int DrawTransistor(Circuit *ci, Transistor *t)
     {
       GLfloat texfg[] = {0.7, 0.7, 0.7, 1.0};
       GLfloat s = 0.015;
-      int w, h;
-      w = texture_string_width (ci->font, t->text, &h);
-
+      XCharStruct e;
+      int w;
+      texture_string_metrics (ci->font, t->text, &e, 0, 0);
+      w = e.width;
       glPushMatrix();
       glTranslatef (0.75, 0.75, 0.01);
       glScalef (s, s, s);
@@ -1911,7 +1908,6 @@ static void display(ModeInfo *mi)
   glEnable(GL_LIGHTING);
   glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
   glLoadIdentity();
-  /* glRotatef(current_device_rotation(), 0, 0, 1); */
   gluLookAt(ci->viewer[0], ci->viewer[1], ci->viewer[2], 
             0.0, 0.0, 0.0, 
             0.0, 1.0, 0.0);
@@ -1926,6 +1922,18 @@ static void display(ModeInfo *mi)
   glLighti(GL_LIGHT0, GL_CONSTANT_ATTENUATION, (GLfloat)1); 
   glLighti(GL_LIGHT0, GL_LINEAR_ATTENUATION, (GLfloat)0.5); 
   glLighti(GL_LIGHT0, GL_QUADRATIC_ATTENUATION, (GLfloat)0); 
+
+# ifdef HAVE_MOBILE	/* Keep it the same relative size when rotated. */
+  {
+    GLfloat h = MI_HEIGHT(mi) / (GLfloat) MI_WIDTH(mi);
+    int o = (int) current_device_rotation();
+    if (o != 0 && o != 180 && o != -180)
+      glScalef (h, h, h);
+    h = 2;
+    glScalef (h, h, h);
+  }
+# endif
+
   mi->polygon_count += drawgrid(ci);
   glMaterialfv(GL_FRONT, GL_AMBIENT_AND_DIFFUSE, light_sp);
   if (f_rand() < 0.05) {

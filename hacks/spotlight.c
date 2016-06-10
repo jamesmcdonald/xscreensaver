@@ -144,7 +144,7 @@ spotlight_init (Display *dpy, Window window)
   st->first_time = 1;
 
   /* create buffer to reduce flicker */
-#ifdef HAVE_COCOA	/* Don't second-guess Quartz's double-buffering */
+#ifdef HAVE_JWXYZ	/* Don't second-guess Quartz's double-buffering */
   st->buffer = 0;
 #else
   st->buffer = XCreatePixmap(st->dpy, st->window, st->sizex, st->sizey, xgwa.depth);
@@ -179,12 +179,6 @@ spotlight_init (Display *dpy, Window window)
   st->max_x_speed = st->max_y_speed = st->radius;
   
   st->off = random();
-
-#ifdef DEBUG
-  /* create GC with white fg */
-  gcv.foreground = fg;
-  st->white_gc = XCreateGC(st->dpy, st->window, gcflags, &gcv);
-#endif
 
   /* blank out screen */
   XFillRectangle(st->dpy, st->window, st->window_gc, 0, 0, st->sizex, st->sizey);
@@ -331,7 +325,7 @@ static const char *spotlight_defaults [] = {
   "*delay:			10000",
   "*duration:			120",
   "*radius:			125",
-#ifdef USE_IPHONE
+#ifdef HAVE_MOBILE
   "*ignoreRotation:             True",
   "*rotateImages:               True",
 #endif

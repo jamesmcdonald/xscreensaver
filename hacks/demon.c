@@ -46,7 +46,7 @@ static const char sccsid[] = "@(#)demon.c	5.00 2000/11/01 xlockmore";
   Triangle 3, 9, or 12
 */
 
-#ifndef HAVE_COCOA
+#ifndef HAVE_JWXYZ
 # define DO_STIPPLE
 #endif
 
@@ -228,25 +228,6 @@ addtolist(ModeInfo * mi, int col, int row, unsigned char state)
 	return True;
 }
 
-#ifdef DEBUG
-static void
-print_state(ModeInfo * mi, int state)
-{
-	demonstruct *dp = &demons[MI_SCREEN(mi)];
-	CellList   *locallist;
-	int         i = 0;
-
-	locallist = dp->cellList[state];
-	(void) printf("state %d\n", state);
-	while (locallist) {
-		(void) printf("%d	x %d, y %d\n", i,
-			      locallist->pt.x, locallist->pt.y);
-		locallist = locallist->next;
-		i++;
-	}
-}
-
-#endif
 
 static void
 free_state(demonstruct * dp, int state)
@@ -465,7 +446,7 @@ init_demon (ModeInfo * mi)
 #endif /* DO_STIPPLE */
 	free_struct(dp);
 
-#ifdef HAVE_COCOA
+#ifdef HAVE_JWXYZ
     jwxyz_XSetAntiAliasing (MI_DISPLAY(mi), MI_GC(mi), False);
 #endif
 

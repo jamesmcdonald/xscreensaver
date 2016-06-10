@@ -74,9 +74,9 @@ typedef long PROP32;
 extern int kill (pid_t, int);		/* signal() is in sys/signal.h... */
 
 Atom XA_VROOT, XA_XSETROOT_ID, XA_ESETROOT_PMAP_ID, XA_XROOTPMAP_ID;
+Atom XA_NET_WM_USER_TIME;
 Atom XA_SCREENSAVER, XA_SCREENSAVER_VERSION, XA_SCREENSAVER_ID;
 Atom XA_SCREENSAVER_STATUS;
-
 
 extern saver_info *global_si_kludge;	/* I hate C so much... */
 
@@ -897,7 +897,7 @@ saver_exit (saver_info *si, int status, const char *dump_core_reason)
 
       if (bugp)
 	fprintf(real_stderr,
-		"%s: see http://www.jwz.org/xscreensaver/bugs.html\n"
+		"%s: see https://www.jwz.org/xscreensaver/bugs.html\n"
 		"\t\t\tfor bug reporting information.\n\n",
 		blurb());
 
@@ -1008,7 +1008,7 @@ store_saver_status (saver_info *si)
 
   status = (PROP32 *) calloc (size, sizeof(PROP32));
 
-  status[0] = (PROP32) (si->screen_blanked_p
+  status[0] = (PROP32) (si->screen_blanked_p || si->locked_p
                         ? (si->locked_p ? XA_LOCK : XA_BLANK)
                         : 0);
   status[1] = (PROP32) si->blank_time;

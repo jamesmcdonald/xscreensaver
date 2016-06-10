@@ -1,5 +1,5 @@
 #!/usr/bin/perl -w
-# Copyright © 2006-2014 Jamie Zawinski <jwz@jwz.org>
+# Copyright © 2006-2016 Jamie Zawinski <jwz@jwz.org>
 #
 # Permission to use, copy, modify, distribute, and sell this software and its
 # documentation for any purpose is hereby granted without fee, provided that
@@ -27,11 +27,12 @@ use IO::Compress::Gzip qw(gzip $GzipError);
 
 my ($exec_dir, $progname) = ($0 =~ m@^(.*?)/([^/]+)$@);
 
-my ($version) = ('$Revision: 1.35 $' =~ m/\s(\d[.\d]+)\s/s);
+my ($version) = ('$Revision: 1.45 $' =~ m/\s(\d[.\d]+)\s/s);
 
 $ENV{PATH} = "/usr/local/bin:$ENV{PATH}";   # for seticon
+$ENV{PATH} = "/opt/local/bin:$ENV{PATH}";   # for macports wget
 
-my $thumbdir = $ENV{HOME} . '/www/xscreensaver/screenshots/';
+my $thumbdir = 'build/screenshots';
 
 
 
@@ -43,13 +44,24 @@ sub convert_plist($$) {
   if ($data && (!$is_binary_p) != (!$to_binary_p)) {
     print STDERR "$progname: converting plist\n" if ($verbose > 2);
     my $which = ($to_binary_p ? 'binary1' : 'xml1');
-    my $cmd = "plutil -convert $which -s -o - -";
-    my $pid = open3 (my $in, my $out, undef, $cmd) || error ("pipe: $cmd: $!");
+    my @cmd = ('plutil', '-convert', $which, '-s', '-o', '-', '-');
+    my $pid = open3 (my $in, my $out, undef, @cmd) ||
+      error ("pipe: $cmd[0]: $!");
+    error ("$cmd[0]: $!") unless $pid;
     print $in $data;
     close $in;
     local $/ = undef;  # read entire file
     $data = <$out>;
     close $out;
+    waitpid ($pid, 0);
+    if ($?) {
+      my $exit_value  = $? >> 8;
+      my $signal_num  = $? & 127;
+      my $dumped_core = $? & 128;
+      error ("$cmd[0]: core dumped!") if ($dumped_core);
+      error ("$cmd[0]: signal $signal_num!") if ($signal_num);
+      error ("$cmd[0]: exited with $exit_value!") if ($exit_value);
+    }
   }
   return $data;
 }
@@ -112,20 +124,11 @@ sub read_saver_xml($) {
 }
 
 
-sub update_saver_xml($$) {
-  my ($app_dir, $vers) = @_;
-  my ($filename, $body, $was_compressed_p) = read_saver_xml ($app_dir);
-  my $obody = $body;
+# This is duplicated in hacks/check-configs.pl for Android
+#
+sub munge_blurb($$$$) {
+  my ($filename, $name, $vers, $desc) = @_;
 
-  return () unless defined ($filename);
-
-  $body =~ m@<screensaver[^<>]*?[ \t]_label=\"([^\"]+)\"@m ||
-    error ("$filename: no name label");
-  my $name = $1;
-
-  $body =~ m@<_description>(.*?)</_description>@s ||
-    error ("$filename: no description tag");
-  my $desc = $1;
   $desc =~ s/^([ \t]*\n)+//s;
   $desc =~ s/\s*$//s;
 
@@ -133,13 +136,15 @@ sub update_saver_xml($$) {
   $desc =~ s@<!--.*?-->@@gs;
   $desc =~ s/^.* version \d[^\n]*\n//s;
   $desc =~ s/^From the XScreenSaver.*\n//m;
-  $desc =~ s@^http://www\.jwz\.org/xscreensaver.*\n@@m;
+  $desc =~ s@^https://www\.jwz\.org/xscreensaver.*\n@@m;
   $desc =~
        s/\nCopyright [^ \r\n\t]+ (\d{4})(-\d{4})? (.*)\.$/\nWritten $3; $1./s;
   $desc =~ s/^\n+//s;
 
-  error ("$filename: description contains bad characters")
-    if ($desc =~ m/([^\t\n -~]|[<>])/);
+  error ("$filename: description contains markup: $1")
+    if ($desc =~ m/([<>&][^<>&\s]*)/s);
+  error ("$filename: description contains ctl chars: $1")
+    if ($desc =~ m/([\000-\010\013-\037])/s);
 
   error ("$filename: can't extract authors")
     unless ($desc =~ m@^(.*)\nWritten by[ \t]+(.+)$@s);
@@ -178,13 +183,13 @@ sub update_saver_xml($$) {
                $desc . "\n" .
                "\n" . 
                "From the XScreenSaver collection: " .
-               "http://www.jwz.org/xscreensaver/\n" .
+               "https://www.jwz.org/xscreensaver/\n" .
                "Copyright \302\251 $year by $authors.\n");
 
   my $desc2 = ("$name $vers,\n" .			# Info.plist
                "\302\251 $year $authors.\n" .
                "From the XScreenSaver collection:\n" .
-               "http://www.jwz.org/xscreensaver/\n" .
+               "https://www.jwz.org/xscreensaver/\n" .
                "\n" .
                $desc .
                "\n");
@@ -192,9 +197,34 @@ sub update_saver_xml($$) {
   # unwrap lines, but only when it's obviously ok: leave blank lines,
   # and don't unwrap if that would compress leading whitespace on a line.
   #
-  $desc2 =~ s/^(From |http:)/\n$1/gm;
+  $desc2 =~ s/^(From |https?:)/\n$1/gm;
   1 while ($desc2 =~ s/([^\s])[ \t]*\n([^\s])/$1 $2/gs);
-  $desc2 =~ s/\n\n(From |http:)/\n$1/gs;
+  $desc2 =~ s/\n\n(From |https?:)/\n$1/gs;
+
+  return ($desc1, $desc2);
+}
+
+
+sub update_saver_xml($$) {
+  my ($app_dir, $vers) = @_;
+  my ($filename, $body, $was_compressed_p) = read_saver_xml ($app_dir);
+  my $obody = $body;
+
+  return () unless defined ($filename);
+
+  $body =~ m@<screensaver[^<>]*?[ \t]_label=\"([^\"]+)\"@m ||
+    error ("$filename: no name label");
+  my $name = $1;
+
+  $body =~ m@<_description>(.*?)</_description>@s ||
+    error ("$filename: no description tag");
+  my $desc = $1;
+
+  error ("$filename: description contains non-ASCII and is not UTF-8: $1")
+    if ($body !~ m/\Q<?xml version="1.0" encoding="UTF-8"/s &&
+        $desc =~ m/([^\000-\176])/s);
+
+  my ($desc1, $desc2) = munge_blurb ($filename, $name, $vers, $desc);
 
   $body =~ s@(<_description>)(.*?)(</_description>)@$1$desc1$3@s;
 
@@ -288,11 +318,9 @@ sub set_icon($) {
   my ($app_dir) = @_;
   $app_dir =~ s@/+$@@s;
 
-  # "seticon" is from osxutils, http://osxutils.sourceforge.net/
-
   my $icon = ($app_dir =~ m/\.saver$/ ? 'XScreenSaver' : 'SaverRunner');
   $icon = "$app_dir/../../../$icon.icns";
-  my @cmd = ("seticon", "-d", $icon, $app_dir);
+  my @cmd = ("$app_dir/../../../seticon.pl", "-d", $icon, $app_dir);
   print STDERR "$progname: exec: " . join(' ', @cmd) . "\n"
     if ($verbose > 1);
   system (@cmd);
@@ -304,11 +332,26 @@ sub set_thumb($) {
 
   return unless ($app_dir =~ m@\.saver/?$@s);
 
-  my @cmd = ("$exec_dir/update-thumbnail.pl", $thumbdir, $app_dir);
-  push @cmd, "-" . ("v" x $verbose) if ($verbose);
-  print STDERR "$progname: exec: " . join(' ', @cmd) . "\n"
-    if ($verbose > 1);
-  system (@cmd);
+  my $name = $app_dir;
+  $name =~ s@^.*/@@s;
+  $name =~ s@\..*?$@@s;
+  $name = lc($name);
+
+  $name = 'rd-bomb' if ($name eq 'rdbomb');  # sigh
+
+  if (! -f "$thumbdir/$name.png") {
+    system ("make", "$thumbdir/$name.png");
+    my $exit  = $? >> 8;
+    exit ($exit) if $exit;
+    error ("unable to download $name.png")
+      unless (-f "$thumbdir/$name.png");
+  }
+
+  $app_dir =~ s@/+$@@s;
+  $app_dir .= "/Contents/Resources";
+  error ("$app_dir does not exist") unless (-d $app_dir);
+
+  system ("cp", "-p", "$thumbdir/$name.png", "$app_dir/thumbnail.png");
   my $exit  = $? >> 8;
   exit ($exit) if $exit;
 }
@@ -392,7 +435,7 @@ sub update($) {
     $copyright =~ s/\b\d{4}-(\d{4})\b/$1/;
 
     # Lose the Wikipedia URLs.
-    $info_str =~ s@http:.*?\b(wikipedia|mathworld)\b[^\s]+[ \t]*\n?@@gm;
+    $info_str =~ s@https?:.*?\b(wikipedia|mathworld)\b[^\s]+[ \t]*\n?@@gm;
 
     $info_str =~ s/(\n\n)\n+/$1/gs;
     $info_str =~ s/(^\s+|\s+$)//gs;

@@ -4,7 +4,7 @@
 
   <command arg="-root"/>
 
-  <video href="http://www.youtube.com/watch?v=J3KAsV31d6M"/>
+  <video href="https://www.youtube.com/watch?v=J3KAsV31d6M"/>
 
   <number id="size" type="slider" arg="-size %"
           _label="Size" _low-label="Tiny" _high-label="Huge"
@@ -44,7 +44,7 @@ This looks like the original Amiga demo if you turn off "smoothing"
 and "lighting" and turn on "scanlines", and is somewhat more modern
 otherwise.
 
-http://en.wikipedia.org/wiki/Amiga#Boing_Ball
+https://en.wikipedia.org/wiki/Amiga#Boing_Ball
 
 Written by Jamie Zawinski; 2005.
   </_description>

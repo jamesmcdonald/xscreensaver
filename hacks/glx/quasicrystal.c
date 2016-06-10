@@ -22,6 +22,7 @@
 			"*contrast:     30          \n" \
 			"*showFPS:      False       \n" \
 			"*wireframe:    False       \n" \
+			"*suppressRotationAnimation: True\n" \
 
 # define refresh_quasicrystal 0
 # define release_quasicrystal 0
@@ -328,7 +329,9 @@ draw_quasicrystal (ModeInfo *mi)
   if (!wire)
     {
       glEnable (GL_TEXTURE_1D);
-      glEnable (GL_TEXTURE_2D);  /* jwzgles needs this too, bleh. */
+# ifdef HAVE_JWZGLES
+      glEnable (GL_TEXTURE_2D);  /* jwzgles needs this, bleh. */
+# endif
     }
 
   glEnable (GL_BLEND);
