@@ -28,12 +28,12 @@
 #include <stdio.h>
 #include <string.h>
 
-#ifdef HAVE_COCOA
+#ifdef HAVE_JWXYZ
 # include "jwxyz.h"
-#else  /* !HAVE_COCOA - real Xlib */
+#else  /* real Xlib */
 # include <X11/Xlib.h>
 # include <X11/Xutil.h>
-#endif /* !HAVE_COCOA */
+#endif /* !HAVE_JWXYZ */
 
 #include "minixpm.h"
 

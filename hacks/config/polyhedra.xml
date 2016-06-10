@@ -4,7 +4,7 @@
 
   <command arg="-root"/>
 
-  <video href="http://www.youtube.com/watch?v=gYb-3EErLJE"/>
+  <video href="https://www.youtube.com/watch?v=gYb-3EErLJE"/>
 
   <number id="delay" type="slider" arg="-delay %"
           _label="Frame rate" _low-label="Low" _high-label="High"
@@ -137,7 +137,7 @@
 <option _label="Great snub icosidodecahedron" arg-set="-which great_snub_icosidodecahedron"/>
 <option _label="Great pentagonal hexecontahedron" arg-set="-which great_pentagonal_hexecontahedron"/>
 <option _label="Small stellated truncated dodecahedron" arg-set="-which small_stellated_truncated_dodecahedron"/>
-<option _label="Great pentakisdodekahedron" arg-set="-which great_pentakisdodekahedron"/>
+<option _label="Great pentakisdodecahedron" arg-set="-which great_pentakisdodecahedron"/>
 <option _label="Truncated dodecadodecahedron" arg-set="-which truncated_dodecadodecahedron"/>
 <option _label="Medial disdyakistriacontahedron" arg-set="-which medial_disdyakistriacontahedron"/>
 <option _label="Inverted snub dodecadodecahedron" arg-set="-which inverted_snub_dodecadodecahedron"/>
@@ -191,10 +191,10 @@
 The 75 uniform polyhedra and their duals, plus 5 prisms
 and antiprisms, and some information about each.
 
-http://en.wikipedia.org/wiki/Uniform_polyhedra
-http://en.wikipedia.org/wiki/Stellation
-http://en.wikipedia.org/wiki/Dual_polyhedron
-http://en.wikipedia.org/wiki/Antiprism
+https://en.wikipedia.org/wiki/Uniform_polyhedra
+https://en.wikipedia.org/wiki/Stellation
+https://en.wikipedia.org/wiki/Dual_polyhedron
+https://en.wikipedia.org/wiki/Antiprism
 
 Written by Dr. Zvi Har'El and Jamie Zawinski; 2004.
   </_description>

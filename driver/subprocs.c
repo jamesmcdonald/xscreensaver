@@ -1,5 +1,5 @@
 /* subprocs.c --- choosing, spawning, and killing screenhacks.
- * xscreensaver, Copyright (c) 1991-2014 Jamie Zawinski <jwz@jwz.org>
+ * xscreensaver, Copyright (c) 1991-2016 Jamie Zawinski <jwz@jwz.org>
  *
  * Permission to use, copy, modify, distribute, and sell this software and its
  * documentation for any purpose is hereby granted without fee, provided that
@@ -213,6 +213,7 @@ struct screenhack_job {
   pid_t pid;
   int screen;
   enum job_status status;
+  time_t launched, killed;
   struct screenhack_job *next;
 };
 
@@ -228,14 +229,21 @@ show_job_list (void)
   struct screenhack_job *job;
   fprintf(stderr, "%s: job list:\n", blurb());
   for (job = jobs; job; job = job->next)
-    fprintf (stderr, "  %5ld: %2d: (%s) %s\n",
-	     (long) job->pid,
-             job->screen,
-	     (job->status == job_running ? "running" :
-	      job->status == job_stopped ? "stopped" :
-	      job->status == job_killed  ? " killed" :
-	      job->status == job_dead    ? "   dead" : "    ???"),
-	     job->name);
+    {
+      char b[] = "           ??:??:??     ";
+      char *t = (job->killed   ? timestring (job->killed) :
+                 job->launched ? timestring (job->launched) : b);
+      t += 11;
+      t[8] = 0;
+        fprintf (stderr, "  %5ld: %2d: (%s) %s %s\n",
+                 (long) job->pid,
+                 job->screen,
+                 (job->status == job_running ? "running" :
+                  job->status == job_stopped ? "stopped" :
+                  job->status == job_killed  ? " killed" :
+                  job->status == job_dead    ? "   dead" : "    ???"),
+                 t, job->name);
+    }
   fprintf (stderr, "\n");
 }
 
@@ -277,6 +285,8 @@ make_job (pid_t pid, int screen, const char *cmd)
   job->pid = pid;
   job->screen = screen;
   job->status = job_running;
+  job->launched = time ((time_t *) 0);
+  job->killed = 0;
   job->next = jobs;
   jobs = job;
 
@@ -315,6 +325,10 @@ static void
 clean_job_list (void)
 {
   struct screenhack_job *job, *prev, *next;
+  time_t now = time ((time_t *) 0);
+  static time_t last_warn = 0;
+  Bool warnedp = False;
+
   for (prev = 0, job = jobs, next = (job ? job->next : 0);
        job;
        prev = job, job = next, next = (job ? job->next : 0))
@@ -326,7 +340,21 @@ clean_job_list (void)
 	  free_job (job);
 	  job = prev;
 	}
+      else if (job->status == job_killed &&
+               now - job->killed > 10 &&
+               now - last_warn   > 10)
+        {
+          fprintf (stderr,
+                   "%s: WARNING: pid %ld (%s) sent SIGTERM %ld seconds ago"
+                   " and did not die!\n",
+                   blurb(),
+                   (long) job->pid,
+                   job->name,
+                   (long) (now - job->killed));
+          warnedp = True;
+        }
     }
+  if (warnedp) last_warn = now;
 }
 
 
@@ -387,6 +415,11 @@ block_sigchld (void)
 void
 unblock_sigchld (void)
 {
+  if (block_sigchld_handler <= 0)
+    abort();
+
+  if (block_sigchld_handler <= 1)  /* only unblock if count going to 0 */
+    {
 #ifdef HAVE_SIGACTION
   struct sigaction sa;
   sigset_t child_set;
@@ -402,6 +435,7 @@ unblock_sigchld (void)
 #else /* !HAVE_SIGACTION */
   signal(SIGPIPE, SIG_DFL);
 #endif /* !HAVE_SIGACTION */
+    }
 
   block_sigchld_handler--;
 }
@@ -415,7 +449,7 @@ kill_job (saver_info *si, pid_t pid, int signal)
 
   clean_job_list();
 
-  if (block_sigchld_handler)
+  if (in_signal_handler_p)
     /* This function should not be called from the signal handler. */
     abort();
 
@@ -433,7 +467,10 @@ kill_job (saver_info *si, pid_t pid, int signal)
     }
 
   switch (signal) {
-  case SIGTERM: job->status = job_killed;  break;
+  case SIGTERM:
+    job->status = job_killed;
+    job->killed = time ((time_t *) 0);
+    break;
 #ifdef SIGSTOP
     /* #### there must be a way to do this on VMS... */
   case SIGSTOP: job->status = job_stopped; break;

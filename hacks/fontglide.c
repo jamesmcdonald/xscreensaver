@@ -1,4 +1,4 @@
-/* xscreensaver, Copyright (c) 2003-2014 Jamie Zawinski <jwz@jwz.org>
+/* xscreensaver, Copyright (c) 2003-2016 Jamie Zawinski <jwz@jwz.org>
  *
  * Permission to use, copy, modify, distribute, and sell this software and its
  * documentation for any purpose is hereby granted without fee, provided that
@@ -25,8 +25,9 @@
 /* #define DEBUG */
 
 #include <math.h>
+#include <time.h>
 
-#ifndef HAVE_COCOA
+#ifndef HAVE_JWXYZ
 # include <X11/Intrinsic.h>
 #endif
 
@@ -103,7 +104,7 @@ typedef struct {
   double speed;		/* frame rate multiplier */
   double linger;	/* multiplier for how long to leave words on screen */
   Bool trails_p;
-  enum { PAGE, SCROLL } mode;
+  enum { PAGE, SCROLL, CHARS } mode;
 
   char *font_override;  /* if -font was specified on the cmd line */
 
@@ -122,8 +123,16 @@ typedef struct {
 
 # ifdef DEBUG
   Bool debug_p;
-  int debug_metrics_p, debug_metrics_antialiasing_p;
+  unsigned long debug_metrics_p;
+  int debug_metrics_antialiasing_p;
   int debug_scale;
+  unsigned entering_unicode_p; /* 0 = No, 1 = Just started, 2 = in progress */
+  XFontStruct *metrics_font1;
+  XFontStruct *metrics_font2;
+  XftFont *metrics_xftfont;
+  GC label_gc;
+  char *prev_font_name;
+  char *next_font_name;
 # endif /* DEBUG */
 
 } state;
@@ -164,8 +173,9 @@ pick_font_1 (state *s, sentence *se)
 {
   Bool ok = False;
   char pattern[1024];
+  char pattern2[1024];
 
-# ifndef HAVE_COCOA /* real Xlib */
+#ifndef HAVE_JWXYZ /* real Xlib */
   char **names = 0;
   char **names2 = 0;
   XFontStruct *info = 0;
@@ -324,25 +334,50 @@ pick_font_1 (state *s, sentence *se)
   XFreeFontInfo (names2, info, count2);
   XFreeFontNames (names);
 
-# else  /* HAVE_COCOA */
+# else  /* HAVE_JWXYZ */
 
   if (s->font_override)
     sprintf (pattern, "%.200s", s->font_override);
   else
     {
       const char *family = "random";
-      const char *weight = ((random() % 2)  ? "normal" : "bold");
+      const char *weight = ((random() % 2)  ? "regular" : "bold");
       const char *slant  = ((random() % 2)  ? "o" : "r");
       int size = 10 * pick_font_size (s);
-      sprintf (pattern, "*-%s-%s-%s-*-%d-*", family, weight, slant, size);
+      sprintf (pattern, "*-%s-%s-%s-*-*-*-%d-*", family, weight, slant, size);
     }
   ok = True;
-# endif /* HAVE_COCOA */
+# endif /* HAVE_JWXYZ */
 
   if (! ok) return False;
 
   se->xftfont = XftFontOpenXlfd (s->dpy, screen_number (s->xgwa.screen),
                                  pattern);
+
+  if (! se->xftfont)
+    {
+# ifdef DEBUG
+      if (s->debug_p)
+        fprintf (stderr, "%s: unable to load font %s\n",
+                 progname, pattern);
+#endif
+      return False;
+    }
+
+  strcpy (pattern2, pattern);
+# ifdef HAVE_JWXYZ
+  {
+    float s;
+    const char *n = jwxyz_nativeFontName (se->xftfont->xfont->fid, &s);
+    sprintf (pattern2 + strlen(pattern2), " (%s %.1f)", n, s);
+  }
+# endif
+
+# ifdef DEBUG
+  if (s->prev_font_name) free (s->prev_font_name);
+  s->prev_font_name = s->next_font_name;
+  s->next_font_name = strdup (pattern2);
+# endif
 
   /* Sometimes we get fonts with screwed up metrics.  For example:
      -b&h-lucida-medium-r-normal-sans-40-289-100-100-p-0-iso8859-1
@@ -413,7 +448,7 @@ pick_font_1 (state *s, sentence *se)
 # ifdef DEBUG
     if (s->debug_p)
       fprintf (stderr, "%s: M ratio %.2f (%d %d): %s\n", progname,
-               ratio, rbearing, width, pattern);
+               ratio, rbearing, width, pattern2);
 # endif
 
     if (ratio < min && !s->font_override)
@@ -421,7 +456,7 @@ pick_font_1 (state *s, sentence *se)
 # ifdef DEBUG
         if (s->debug_p)
           fprintf (stderr, "%s: skipping font with broken metrics: %s\n",
-                   progname, pattern);
+                   progname, pattern2);
 # endif
         return False;
       }
@@ -429,16 +464,8 @@ pick_font_1 (state *s, sentence *se)
 
 
 # ifdef DEBUG
-  if (! se->xftfont)
-    {
-      if (s->debug_p)
-        fprintf (stderr, "%s: unable to load font %s\n",
-                 progname, pattern);
-      return False;
-    }
-
   if (s->debug_p) 
-    fprintf(stderr, "%s: %s\n", progname, pattern);
+    fprintf(stderr, "%s: %s\n", progname, pattern2);
 # endif /* DEBUG */
 
   se->font_name = strdup (pattern);
@@ -467,7 +494,7 @@ static char *unread_word_text = 0;
 /* Returns a newly-allocated string with one word in it, or NULL if there
    is no complete word available.
  */
-static const char *
+static char *
 get_word_text (state *s)
 {
   const char *start = s->buf;
@@ -494,9 +521,9 @@ get_word_text (state *s)
 
   if (unread_word_text)
     {
-      start = unread_word_text;
+      result = unread_word_text;
       unread_word_text = 0;
-      return start;
+      return strdup (result);
     }
 
   /* Skip over whitespace at the beginning of the buffer,
@@ -1055,7 +1082,8 @@ populate_sentence (state *s, sentence *se)
 
   int array_size = 100;
 
-  se->move_chars_p = (s->mode == SCROLL ? False :
+  se->move_chars_p = (s->mode == CHARS ? True :
+                      s->mode == SCROLL ? False :
                       (random() % 3) ? False : True);
   se->alignment = (random() % 3);
 
@@ -1074,6 +1102,7 @@ populate_sentence (state *s, sentence *se)
   switch (s->mode)
     {
     case PAGE:
+    case CHARS:
       left  = random() % (s->xgwa.width / 3);
       right = s->xgwa.width - (random() % (s->xgwa.width / 3));
       top = random() % (s->xgwa.height * 2 / 3);
@@ -1093,7 +1122,7 @@ populate_sentence (state *s, sentence *se)
 
   while (!done)
     {
-      const char *txt = get_word_text (s);
+      char *txt = get_word_text (s);
       word *w;
       if (!txt)
         {
@@ -1118,6 +1147,8 @@ populate_sentence (state *s, sentence *se)
         }
 
       w = new_word (s, se, txt, !se->move_chars_p);
+      free (txt);
+      txt = 0;
 
       /* If we have a few words, let punctuation terminate the sentence:
          stop gathering more words if the last word ends in a period, etc. */
@@ -1140,7 +1171,7 @@ populate_sentence (state *s, sentence *se)
       if (se->nwords >= 25)  /* ok that's just about enough out of you */
         done = True;
 
-      if (s->mode == PAGE &&
+      if ((s->mode == PAGE || s->mode == CHARS) &&
           x + w->rbearing > right)			/* wrap line */
         {
           align_line (s, se, line_start, x, right);
@@ -1157,6 +1188,7 @@ populate_sentence (state *s, sentence *se)
               y + se->xftfont->ascent + se->xftfont->descent > s->xgwa.height)
             {
               unread_word (s, w);
+              free (w);
               /* done = True; */
               break;
             }
@@ -1189,6 +1221,7 @@ populate_sentence (state *s, sentence *se)
   switch (s->mode)
     {
     case PAGE:
+    case CHARS:
       align_line (s, se, line_start, x, right);
       if (se->move_chars_p)
         split_words (s, se);
@@ -1290,6 +1323,7 @@ draw_sentence (state *s, sentence *se)
       switch (s->mode)
         {
         case PAGE:
+        case CHARS:
           if (se->anim_state != PAUSE &&
               w->tick <= w->nticks)
             {
@@ -1300,7 +1334,8 @@ draw_sentence (state *s, sentence *se)
               w->y = w->start_y + (dy * r);
 
               w->tick++;
-              if (se->anim_state == OUT && s->mode == PAGE)
+              if (se->anim_state == OUT &&
+                  (s->mode == PAGE || s->mode == CHARS))
                 w->tick++;  /* go out faster */
               moved = True;
             }
@@ -1491,13 +1526,11 @@ fontglide_draw_metrics (state *s)
   char txt[2], utxt[3], txt2[80];
   XChar2b *txt3 = 0;
   const char *fn = (s->font_override ? s->font_override : "fixed");
-  XFontStruct *font = XLoadQueryFont (s->dpy, fn);
-  XFontStruct *font2 = XLoadQueryFont (s->dpy, "fixed");
+  char fn2[1024];
   XCharStruct c, overall, fake_c;
   int dir, ascent, descent;
   int x, y;
   XGlyphInfo extents;
-  XftFont *xftfont;
   XftColor xftcolor;
   XftDraw *xftdraw;
   int sc = s->debug_scale;
@@ -1512,78 +1545,169 @@ fontglide_draw_metrics (state *s)
 
   if (sc < 1) sc = 1;
 
+  /* Self-test these macros to make sure they're symmetrical. */
+  for (i = 0; i < 1000; i++)
+    {
+      XGlyphInfo g, g2;
+      XRectangle r;
+      c.lbearing = (random()%50)-100;
+      c.rbearing = (random()%50)-100;
+      c.ascent   = (random()%50)-100;
+      c.descent  = (random()%50)-100;
+      c.width    = (random()%50)-100;
+      XCharStruct_to_XGlyphInfo (c, g);
+      XGlyphInfo_to_XCharStruct (g, overall);
+      if (c.lbearing != overall.lbearing) abort();
+      if (c.rbearing != overall.rbearing) abort();
+      if (c.ascent   != overall.ascent)   abort();
+      if (c.descent  != overall.descent)  abort();
+      if (c.width    != overall.width)    abort();
+      XCharStruct_to_XGlyphInfo (overall, g2);
+      if (g.x      != g2.x)      abort();
+      if (g.y      != g2.y)      abort();
+      if (g.xOff   != g2.xOff)   abort();
+      if (g.yOff   != g2.yOff)   abort();
+      if (g.width  != g2.width)  abort();
+      if (g.height != g2.height) abort();
+      XCharStruct_to_XmbRectangle (overall, r);
+      XmbRectangle_to_XCharStruct (r, c, c.width);
+      if (c.lbearing != overall.lbearing) abort();
+      if (c.rbearing != overall.rbearing) abort();
+      if (c.ascent   != overall.ascent)   abort();
+      if (c.descent  != overall.descent)  abort();
+      if (c.width    != overall.width)    abort();
+    }
+
   txt[0] = s->debug_metrics_p;
   txt[1] = 0;
 
-  /* Convert Latin1 to UTF-8. */
-  if ((unsigned char) txt[0] >= 0xC0)
-    {
-      utxt[0] = 0xC3;
-      utxt[1] = ((unsigned char) txt[0]) & 0xBF;
-      utxt[2] = 0;
-    }
-  else if ((unsigned char) txt[0] >= 0xA0)
-    {
-      utxt[0] = 0xC2;
-      utxt[1] = txt[0];
-      utxt[2] = 0;
-    }
-  else
-    {
-      utxt[0] = txt[0];
-      utxt[1] = 0;
-    }
+  /* Convert Unicode code point to UTF-8. */
+  utxt[utf8_encode(s->debug_metrics_p, utxt, 4)] = 0;
 
   txt3 = utf8_to_XChar2b (utxt, 0);
 
-  if (! font) font = font2;
+  if (! s->metrics_font1)
+    s->metrics_font1 = XLoadQueryFont (s->dpy, fn);
+  if (! s->metrics_font2)
+    s->metrics_font2 = XLoadQueryFont (s->dpy, "fixed");
+  if (! s->metrics_font1)
+    s->metrics_font1 = s->metrics_font2;
 
   gc  = XCreateGC (s->dpy, dest, 0, 0);
-  XSetFont (s->dpy, gc,  font->fid);
+  XSetFont (s->dpy, gc,  s->metrics_font1->fid);
 
-# ifdef HAVE_COCOA
+# if defined(HAVE_JWXYZ)
   jwxyz_XSetAntiAliasing (s->dpy, gc, False);
 # endif
 
-  xftfont = XftFontOpenXlfd (s->dpy, screen_number(s->xgwa.screen), fn);
-  if (! xftfont)
-    xftfont = XftFontOpenXlfd (s->dpy, screen_number(s->xgwa.screen), "fixed");
-  if (! xftfont)
-    abort();
+  if (! s->metrics_xftfont)
+    {
+      s->metrics_xftfont =
+        XftFontOpenXlfd (s->dpy, screen_number(s->xgwa.screen), fn);
+      if (! s->metrics_xftfont)
+        {
+          const char *fn2 = "fixed";
+          s->metrics_xftfont =
+            XftFontOpenName (s->dpy, screen_number(s->xgwa.screen), fn2);
+          if (s->metrics_xftfont)
+            fn = fn2;
+          else
+            {
+              fprintf (stderr, "%s: XftFontOpen failed on \"%s\" and \"%s\"\n",
+                       progname, fn, fn2);
+              exit (1);
+            }
+        }
+    }
 
+  strcpy (fn2, fn);
+# ifdef HAVE_JWXYZ
+  {
+    float ss;
+    const char *n = jwxyz_nativeFontName (s->metrics_xftfont->xfont->fid, &ss);
+    sprintf (fn2, "%s %.1f", n, ss);
+  }
+# endif
 
   xftdraw = XftDrawCreate (s->dpy, dest, s->xgwa.visual,
                            s->xgwa.colormap);
   XftColorAllocName (s->dpy, s->xgwa.visual, s->xgwa.colormap, "white",
                      &xftcolor);
-  XftTextExtentsUtf8 (s->dpy, xftfont, (FcChar8 *) utxt, strlen(utxt),
+  XftTextExtentsUtf8 (s->dpy, s->metrics_xftfont,
+                      (FcChar8 *) utxt, strlen(utxt),
                       &extents);
 
 
-  XTextExtents (font, txt, strlen(txt), 
+  XTextExtents (s->metrics_font1, txt, strlen(txt), 
                 &dir, &ascent, &descent, &overall);
-  c = (s->debug_metrics_p >= font->min_char_or_byte2
-       ? font->per_char[s->debug_metrics_p - font->min_char_or_byte2]
-       : overall);
+  c = ((s->debug_metrics_p >= s->metrics_font1->min_char_or_byte2 &&
+        s->debug_metrics_p <= s->metrics_font1->max_char_or_byte2)
+        ? s->metrics_font1->per_char[s->debug_metrics_p -
+                                     s->metrics_font1->min_char_or_byte2]
+        : overall);
 
   XSetForeground (s->dpy, gc, BlackPixelOfScreen (s->xgwa.screen));
   XFillRectangle (s->dpy, dest, gc, 0, 0, s->xgwa.width, s->xgwa.height);
 
+  XSetForeground (s->dpy, gc, WhitePixelOfScreen (s->xgwa.screen));
+  XSetFont (s->dpy, gc, s->metrics_font2->fid);
+  XDrawString (s->dpy, dest, gc, 
+               s->xgwa.width / 2,
+               s->xgwa.height - 5,
+               fn2, strlen(fn2));
+
+# ifdef HAVE_JWXYZ
+  {
+    char *name =
+      jwxyz_unicode_character_name (s->metrics_font1->fid, s->debug_metrics_p);
+    if (!name || !*name) name = strdup("unknown character name");
+    XDrawString (s->dpy, dest, gc, 
+                 10,
+                 10 + 2 * (s->metrics_font2->ascent +
+                           s->metrics_font2->descent),
+                 name, strlen(name));
+    free (name);
+  }
+# endif
+
+  /* i 0, j 0: top left,  XDrawString,       char metrics
+     i 1, j 0: bot left,  XDrawString,       overall metrics, ink escape
+     i 0, j 1: top right, XftDrawStringUtf8, utf8 metrics
+     i 1, j 1: bot right, XDrawString16,     16 metrics, ink escape
+   */
   for (j = 0; j < 2; j++) {
     Bool xft_p = (j != 0);
     int ww = s->xgwa.width / 2 - 20;
+    int xoff = (j == 0 ? 0 : ww + 20);
+
+    /* XDrawString only does 8-bit characters, so skip it outside Latin-1. */
+    if (s->debug_metrics_p >= 256)
+      {
+        if (!xft_p)
+          continue;
+        xoff = 0;
+        ww = s->xgwa.width;
+      }
+
     x = (ww - overall.width) / 2;
-    y = (s->xgwa.height - (2 * sc * (ascent + descent))) / 2;
     
    for (i = 0; i < 2; i++)
     {
-      int xoff = (j == 0 ? 0 : ww + 20);
       XCharStruct cc;
       int x1 = xoff + ww * 0.18;
       int x2 = xoff + ww * 0.82;
       int x3 = xoff + ww;
       int pixw, pixh;
       Pixmap p;
+
+      y = 80;
+      {
+        int h = sc * (ascent + descent);
+        int min = (ascent + descent) * 4;
+        if (h < min) h = min;
+        if (i == 1) h *= 3;
+        y += h;
+      }
 
       memset (&fake_c, 0, sizeof(fake_c));
 
@@ -1595,20 +1719,19 @@ fontglide_draw_metrics (state *s)
         {
           /* Measure the glyph in the Xft way */
           XGlyphInfo extents;
-          XftTextExtentsUtf8 (s->dpy, xftfont, (FcChar8 *) utxt, strlen(utxt),
+          XftTextExtentsUtf8 (s->dpy, 
+                              s->metrics_xftfont,
+                              (FcChar8 *) utxt, strlen(utxt),
                               &extents);
-          fake_c.lbearing = -extents.x;
-          fake_c.rbearing = extents.width - extents.x;
-          fake_c.ascent   = extents.y;
-          fake_c.descent  = extents.height - extents.y;
-          fake_c.width    = extents.xOff;
+          XGlyphInfo_to_XCharStruct (extents, fake_c);
           cc = fake_c;
         }
       else if (xft_p)
         {
           /* Measure the glyph in the 16-bit way */
           int dir, ascent, descent;
-          XTextExtents16 (font, txt3, 1, &dir, &ascent, &descent, &fake_c);
+          XTextExtents16 (s->metrics_font1, txt3, 1, &dir, &ascent, &descent,
+                          &fake_c);
           cc = fake_c;
         }
 
@@ -1622,23 +1745,25 @@ fontglide_draw_metrics (state *s)
         {
           Pixmap p2;
           GC gc2 = XCreateGC (s->dpy, p, 0, 0);
-# ifdef HAVE_COCOA
+# ifdef HAVE_JWXYZ
           jwxyz_XSetAntiAliasing (s->dpy, gc2, False);
 # endif
-          XSetFont (s->dpy, gc2, font->fid);
+          XSetFont (s->dpy, gc2, s->metrics_font1->fid);
           XSetForeground (s->dpy, gc2, BlackPixelOfScreen (s->xgwa.screen));
           XFillRectangle (s->dpy, p, gc2, 0, 0, pixw, pixh);
           XSetForeground (s->dpy, gc,  WhitePixelOfScreen (s->xgwa.screen));
           XSetForeground (s->dpy, gc2, WhitePixelOfScreen (s->xgwa.screen));
-# ifdef HAVE_COCOA
-          jwxyz_XSetAntiAliasing (s->dpy, gc2, s->debug_metrics_antialiasing_p);
+# ifdef HAVE_JWXYZ
+          jwxyz_XSetAntiAliasing (s->dpy, gc2,
+                                  s->debug_metrics_antialiasing_p);
 # endif
 
           if (xft_p && i == 0)
             {
               XftDraw *xftdraw2 = XftDrawCreate (s->dpy, p, s->xgwa.visual,
                                                  s->xgwa.colormap);
-              XftDrawStringUtf8 (xftdraw2, &xftcolor, xftfont,
+              XftDrawStringUtf8 (xftdraw2, &xftcolor, 
+                                 s->metrics_xftfont,
                                  -cc.lbearing + margin,
                                  cc.ascent + margin,
                                  (FcChar8 *) utxt, strlen(utxt));
@@ -1682,7 +1807,7 @@ fontglide_draw_metrics (state *s)
 
                       if (ink & 0xFFFFFF)
                       {
-                        XSetFont (s->dpy, gc, font2->fid);
+                        XSetFont (s->dpy, gc, s->metrics_font2->fid);
                         XDrawString (s->dpy, dest, gc,
                                      xoff + 10, 40,
                                      "Ink escape!", 11);
@@ -1701,7 +1826,7 @@ fontglide_draw_metrics (state *s)
                         check_edge (s->dpy, dest, gc, 240, 60, "bottom",
                                     img, margin, margin + h - 1, 0, w))
                       {
-                        XSetFont (s->dpy, gc, font2->fid);
+                        XSetFont (s->dpy, gc, s->metrics_font2->fid);
                         XDrawString (s->dpy, dest, gc, 
                                      xoff + 10, 60,
                                      "Wasted space: ", 14);
@@ -1767,9 +1892,9 @@ fontglide_draw_metrics (state *s)
 
       if (i == 0)
         {
-          XSetFont (s->dpy, gc, font->fid);
+          XSetFont (s->dpy, gc, s->metrics_font1->fid);
           XSetForeground (s->dpy, gc,  WhitePixelOfScreen (s->xgwa.screen));
-# ifdef HAVE_COCOA
+# ifdef HAVE_JWXYZ
           jwxyz_XSetAntiAliasing (s->dpy, gc, s->debug_metrics_antialiasing_p);
 # endif
           sprintf (txt2, "%s        [XX%sXX]    [%s%s%s%s]",
@@ -1781,8 +1906,10 @@ fontglide_draw_metrics (state *s)
                    (xft_p ? utxt : txt));
 
           if (xft_p)
-            XftDrawStringUtf8 (xftdraw, &xftcolor, xftfont,
-                               xoff + x/2 + (sc*cc.rbearing/2) - cc.rbearing/2,
+            XftDrawStringUtf8 (xftdraw, &xftcolor,
+                               s->metrics_xftfont,
+                               xoff + x/2 + (sc*cc.rbearing/2) - cc.rbearing/2
+                               + 40,
                                ascent + 10,
                              (FcChar8 *) txt2, strlen(txt2));
           else
@@ -1790,27 +1917,43 @@ fontglide_draw_metrics (state *s)
                          xoff + x/2 + (sc*cc.rbearing/2) - cc.rbearing/2,
                          ascent + 10,
                          txt2, strlen(txt2));
-# ifdef HAVE_COCOA
+# ifdef HAVE_JWXYZ
           jwxyz_XSetAntiAliasing (s->dpy, gc, False);
 # endif
-          XSetFont (s->dpy, gc, font2->fid);
-          if (xft_p && utxt[1])
-            sprintf (txt2, "0%03o 0%03o   %02x %02x",
-                     (unsigned char) utxt[0], (unsigned char) utxt[1],
-                     (unsigned char) utxt[0], (unsigned char) utxt[1]);
-          else if (xft_p)
-            txt2[0] = 0;
+          XSetFont (s->dpy, gc, s->metrics_font2->fid);
+          if (xft_p)
+            {
+              char *uptr;
+              char *tptr = txt2 + sprintf(txt2, "U+%04lX", s->debug_metrics_p);
+              *tptr++ = " ?_"[s->entering_unicode_p];
+              *tptr++ = ' ';
+
+              uptr = utxt;
+              while (*uptr)
+                {
+                  tptr += sprintf (tptr, "0%03o ", (unsigned char) *uptr);
+                  ++uptr;
+                }
+              *tptr++ = ' ';
+              uptr = utxt;
+              while (*uptr)
+                {
+                  tptr += sprintf (tptr, "%02x ", (unsigned char) *uptr);
+                  ++uptr;
+                }
+            }
           else
-            sprintf (txt2, "%c %3d 0%03o 0x%02x%s",
+            sprintf (txt2, "%c %3ld 0%03lo 0x%02lx%s",
+                     (char)s->debug_metrics_p, s->debug_metrics_p,
                      s->debug_metrics_p, s->debug_metrics_p,
-                     s->debug_metrics_p, s->debug_metrics_p,
-                     (txt[0] < font->min_char_or_byte2 ? " *" : ""));
+                     (txt[0] < s->metrics_font1->min_char_or_byte2
+                      ? " *" : ""));
           XDrawString (s->dpy, dest, gc,
                        xoff + 10, 20,
                        txt2, strlen(txt2));
         }
 
-# ifdef HAVE_COCOA
+# ifdef HAVE_JWXYZ
       jwxyz_XSetAntiAliasing (s->dpy, gc, True);
 # endif
 
@@ -1818,7 +1961,7 @@ fontglide_draw_metrics (state *s)
         const char *ss = (j == 0
                           ? (i == 0 ? "char" : "overall")
                           : (i == 0 ? "utf8" : "16 bit"));
-        XSetFont (s->dpy, gc, font2->fid);
+        XSetFont (s->dpy, gc, s->metrics_font2->fid);
 
         XSetForeground (s->dpy, gc, red);
 
@@ -1879,7 +2022,7 @@ fontglide_draw_metrics (state *s)
       strcpy (txt2, "origin");
       XDrawString (s->dpy, dest, gc,
                    xoff + x + 2,
-                   y + sc*(descent + 10),
+                   y + sc*descent + 50,
                    txt2, strlen(txt2));
       XDrawLine (s->dpy, dest, gc,
                  xoff + x, y - sc*(ascent  - 10),
@@ -1888,7 +2031,7 @@ fontglide_draw_metrics (state *s)
       sprintf (txt2, "width %d", cc.width);
       XDrawString (s->dpy, dest, gc,
                    xoff + x + sc*cc.width + 2,
-                   y + sc*(descent + 10) + 10, 
+                   y + sc*descent + 60, 
                    txt2, strlen(txt2));
       XDrawLine (s->dpy, dest, gc,
                  xoff + x + sc*cc.width, y - sc*(ascent  - 10),
@@ -1917,7 +2060,7 @@ fontglide_draw_metrics (state *s)
                  xoff + x + sc*cc.rbearing, y - sc*ascent,
                  xoff + x + sc*cc.rbearing, y + sc*descent + 40);
 
-      y += sc * (ascent + descent) * 2;
+      /* y += sc * (ascent + descent) * 2; */
     }
   }
 
@@ -1926,11 +2069,6 @@ fontglide_draw_metrics (state *s)
                0, 0, s->xgwa.width, s->xgwa.height, 0, 0);
 
   XFreeGC (s->dpy, gc);
-  XFreeFont (s->dpy, font);
-  if (font != font2)
-    XFreeFont (s->dpy, font2);
-
-  XftFontClose (s->dpy, xftfont);
   XftColorFree (s->dpy, s->xgwa.visual, s->xgwa.colormap, &xftcolor);
   XftDrawDestroy (xftdraw);
   free (txt3);
@@ -1964,6 +2102,27 @@ fontglide_draw (Display *dpy, Window window, void *closure)
 
   for (i = 0; i < s->nsentences; i++)
     draw_sentence (s, s->sentences[i]);
+
+# ifdef DEBUG
+  if (s->debug_p && (s->prev_font_name || s->next_font_name))
+    {
+      if (! s->label_gc)
+        {
+          if (! s->metrics_font2)
+            s->metrics_font2 = XLoadQueryFont (s->dpy, "fixed");
+          s->label_gc = XCreateGC (dpy, s->b, 0, 0);
+          XSetFont (s->dpy, s->label_gc, s->metrics_font2->fid);
+        }
+      if (s->prev_font_name)
+        XDrawString (s->dpy, s->b, s->label_gc,
+                     10, 10 + s->metrics_font2->ascent,
+                     s->prev_font_name, strlen(s->prev_font_name));
+      if (s->next_font_name)
+        XDrawString (s->dpy, s->b, s->label_gc,
+                     10, 10 + s->metrics_font2->ascent * 2,
+                     s->next_font_name, strlen(s->next_font_name));
+    }
+# endif /* DEBUG */
 
 #ifdef HAVE_DOUBLE_BUFFER_EXTENSION
   if (s->backb)
@@ -2040,11 +2199,17 @@ fontglide_init (Display *dpy, Window window)
   s->debug_metrics_p = (get_boolean_resource (dpy, "debugMetrics", "Debug")
                         ? 199 : 0);
   s->debug_scale = 6;
+
+#  ifdef HAVE_JWXYZ
+  if (s->debug_metrics_p && !s->font_override)
+    s->font_override = "Helvetica Bold 16";
+#  endif
+
 # endif /* DEBUG */
 
   s->dbuf = get_boolean_resource (dpy, "doubleBuffer", "Boolean");
 
-# ifdef HAVE_COCOA	/* Don't second-guess Quartz's double-buffering */
+# ifdef HAVE_JWXYZ	/* Don't second-guess Quartz's double-buffering */
   s->dbuf = False;
 # endif
 
@@ -2062,6 +2227,8 @@ fontglide_init (Display *dpy, Window window)
       s->mode = SCROLL;
     else if (!strcasecmp (ss, "page"))
       s->mode = PAGE;
+    else if (!strcasecmp (ss, "chars") || !strcasecmp (ss, "char"))
+      s->mode = CHARS;
     else
       {
         fprintf (stderr,
@@ -2120,9 +2287,44 @@ fontglide_event (Display *dpy, Window window, void *closure, XEvent *event)
     return False;
   if (event->xany.type == KeyPress)
     {
+      static const unsigned long max = 0x110000;
       KeySym keysym;
       char c = 0;
       XLookupString (&event->xkey, &c, 1, &keysym, 0);
+
+      if (s->entering_unicode_p > 0)
+        {
+          unsigned digit;
+          unsigned long new_char = 0;
+
+          if (c >= 'a' && c <= 'f')
+            digit = c + 0xa - 'a';
+          else if (c >= 'A' && c <= 'F')
+            digit = c + 0xa - 'A';
+          else if (c >= '0' && c <= '9')
+            digit = c + 0 - '0';
+          else
+            {
+              s->entering_unicode_p = 0;
+              return True;
+            }
+
+          if (s->entering_unicode_p == 1)
+            new_char = 0;
+          else if (s->entering_unicode_p == 2)
+            new_char = s->debug_metrics_p;
+
+          new_char = (new_char << 4) | digit;
+          if (new_char > 0 && new_char < max)
+            {
+              s->debug_metrics_p = new_char;
+              s->entering_unicode_p = 2;
+            }
+          else
+            s->entering_unicode_p = 0;
+          return True;
+        }
+
       if (c == '\t')
         s->debug_metrics_antialiasing_p ^= True;
       else if (c == 3 || c == 27)
@@ -2132,16 +2334,22 @@ fontglide_event (Display *dpy, Window window, void *closure, XEvent *event)
       else if (keysym == XK_Left || keysym == XK_Right)
         {
           s->debug_metrics_p += (keysym == XK_Left ? -1 : 1);
-          if (s->debug_metrics_p > 255)
+          if (s->debug_metrics_p >= max)
             s->debug_metrics_p = 1;
           else if (s->debug_metrics_p <= 0)
-            s->debug_metrics_p = 255;
+            s->debug_metrics_p = max - 1;
           return True;
         }
+      else if (keysym == XK_Prior)
+        s->debug_metrics_p = (s->debug_metrics_p + max - 0x80) % max;
+      else if (keysym == XK_Next)
+        s->debug_metrics_p = (s->debug_metrics_p + 0x80) % max;
       else if (keysym == XK_Up)
         s->debug_scale++;
       else if (keysym == XK_Down)
         s->debug_scale = (s->debug_scale > 1 ? s->debug_scale-1 : 1);
+      else if (keysym == XK_F1)
+        s->entering_unicode_p = 1;
       else
         return False;
       return True;
@@ -2176,6 +2384,18 @@ fontglide_free (Display *dpy, Window window, void *closure)
 {
   state *s = (state *) closure;
   textclient_close (s->tc);
+
+#ifdef DEBUG
+  if (s->metrics_xftfont)
+    XftFontClose (s->dpy, s->metrics_xftfont);
+  if (s->metrics_font1)
+    XFreeFont (s->dpy, s->metrics_font1);
+  if (s->metrics_font2 && s->metrics_font1 != s->metrics_font2)
+    XFreeFont (s->dpy, s->metrics_font2);
+  if (s->prev_font_name) free (s->prev_font_name);
+  if (s->next_font_name) free (s->next_font_name);
+  if (s->label_gc) XFreeGC (dpy, s->label_gc);
+#endif
 
   /* #### there's more to free here */
 

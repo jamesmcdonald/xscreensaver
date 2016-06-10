@@ -1,4 +1,4 @@
-/* xscreensaver, Copyright (c) 2006-2014 Jamie Zawinski <jwz@jwz.org>
+/* xscreensaver, Copyright (c) 2006-2016 Jamie Zawinski <jwz@jwz.org>
  *
  * Permission to use, copy, modify, distribute, and sell this software and its
  * documentation for any purpose is hereby granted without fee, provided that
@@ -129,6 +129,7 @@ typedef enum { SimpleXMLCommentKind,
     [n setName:key];
     [n setObjectValue:val];
     [attributes addObject:n];
+    [n release];
   }
 }
 
@@ -147,6 +148,48 @@ typedef enum { SimpleXMLCommentKind,
   [kids addObject:self];
 }
 @end
+
+
+#pragma mark textMode value transformer
+
+// A value transformer for mapping "url" to "3" and vice versa in the
+// "textMode" preference, since NSMatrix uses NSInteger selectedIndex.
+
+#ifndef USE_IPHONE
+@interface TextModeTransformer: NSValueTransformer {}
+@end
+@implementation TextModeTransformer
++ (Class)transformedValueClass { return [NSString class]; }
++ (BOOL)allowsReverseTransformation { return YES; }
+
+- (id)transformedValue:(id)value {
+  if ([value isKindOfClass:[NSString class]]) {
+    int i = -1;
+    if      ([value isEqualToString:@"date"])    { i = 0; }
+    else if ([value isEqualToString:@"literal"]) { i = 1; }
+    else if ([value isEqualToString:@"file"])    { i = 2; }
+    else if ([value isEqualToString:@"url"])     { i = 3; }
+    else if ([value isEqualToString:@"program"]) { i = 4; }
+    if (i != -1)
+      value = [NSNumber numberWithInt: i];
+  }
+  return value;
+}
+
+- (id)reverseTransformedValue:(id)value {
+  if ([value isKindOfClass:[NSNumber class]]) {
+    switch ((int) [value doubleValue]) {
+    case 0: value = @"date";    break;
+    case 1: value = @"literal"; break;
+    case 2: value = @"file";    break;
+    case 3: value = @"url";     break;
+    case 4: value = @"program"; break;
+    }
+  }
+  return value;
+}
+@end
+#endif // USE_IPHONE
 
 
 #pragma mark Implementing radio buttons
@@ -501,7 +544,7 @@ static void layout_group (NSView *group, BOOL horiz_p);
                            opts:(const XrmOptionDescRec *)opts_array
                          valRet:(NSString **)val_ret
 {
-  char buf[255];
+  char buf[1280];
   char *tail = 0;
   NSAssert(cmdline_switch, @"cmdline switch is null");
   if (! [cmdline_switch getCString:buf maxLength:sizeof(buf)
@@ -666,6 +709,11 @@ static void layout_group (NSView *group, BOOL horiz_p);
 
 - (void) okAction:(NSObject *)arg
 {
+  // Without the setAppliesImmediately:, when the saver restarts, it's still
+  // got the old settings. -[XScreenSaverConfigSheet traverseTree] sets this
+  // to NO; default is YES.
+  [userDefaultsController   setAppliesImmediately:YES];
+  [globalDefaultsController setAppliesImmediately:YES];
   [userDefaultsController   commitEditing];
   [globalDefaultsController commitEditing];
   [userDefaultsController   save:self];
@@ -713,15 +761,23 @@ static void layout_group (NSView *group, BOOL horiz_p);
 {
   NSUserDefaultsController *prefs = [self controllerForKey:pref_key];
 # ifndef USE_IPHONE
+  NSDictionary *opts_dict = nil;
   NSString *bindto = ([control isKindOfClass:[NSPopUpButton class]]
                       ? @"selectedObject"
                       : ([control isKindOfClass:[NSMatrix class]]
                          ? @"selectedIndex"
                          : @"value"));
+
+  if ([control isKindOfClass:[NSMatrix class]]) {
+    opts_dict = @{ NSValueTransformerNameBindingOption:
+                   @"TextModeTransformer" };
+  }
+
   [control bind:bindto
        toObject:prefs
     withKeyPath:[@"values." stringByAppendingString: pref_key]
-        options:nil];
+        options:opts_dict];
+
 # else  // USE_IPHONE
   SEL sel;
   NSObject *val = [prefs objectForKey:pref_key];
@@ -792,9 +848,17 @@ static void layout_group (NSView *group, BOOL horiz_p);
   NSObject *def = [[prefs defaults] objectForKey:pref_key];
   NSString *s = [NSString stringWithFormat:@"bind: \"%@\"", pref_key];
   s = [s stringByPaddingToLength:18 withString:@" " startingAtIndex:0];
-  s = [NSString stringWithFormat:@"%@ = \"%@\"", s, def];
-  s = [s stringByPaddingToLength:28 withString:@" " startingAtIndex:0];
-  NSLog (@"%@ %@/%@", s, [def class], [control class]);
+  s = [NSString stringWithFormat:@"%@ = %@", s, 
+                ([def isKindOfClass:[NSString class]]
+                 ? [NSString stringWithFormat:@"\"%@\"", def]
+                 : def)];
+  s = [s stringByPaddingToLength:30 withString:@" " startingAtIndex:0];
+  s = [NSString stringWithFormat:@"%@ %@ / %@", s,
+                [def class], [control class]];
+#  ifndef USE_IPHONE
+  s = [NSString stringWithFormat:@"%@ / %@", s, bindto];
+#  endif
+  NSLog (@"%@", s);
 # endif
 }
 
@@ -1127,6 +1191,8 @@ hreffify (NSText *nstext)
   [self parseAttrs:dict node:node];
   NSString *name  = [dict objectForKey:@"name"];
   NSString *label = [dict objectForKey:@"_label"];
+  [dict release];
+  dict = 0;
     
   NSAssert1 (label, @"no _label in %@", [node name]);
   NSAssert1 (name, @"no name in \"%@\"", label);
@@ -1160,6 +1226,7 @@ hreffify (NSText *nstext)
   [lab setAutoresizingMask: (UIViewAutoresizingFlexibleWidth |
                              UIViewAutoresizingFlexibleHeight)];
 # endif // USE_IPHONE
+  [lab autorelease];
   return lab;
 }
 
@@ -1177,6 +1244,8 @@ hreffify (NSText *nstext)
   NSString *label     = [dict objectForKey:@"_label"];
   NSString *arg_set   = [dict objectForKey:@"arg-set"];
   NSString *arg_unset = [dict objectForKey:@"arg-unset"];
+  [dict release];
+  dict = 0;
   
   if (!label) {
     NSAssert1 (0, @"no _label in %@", [node name]);
@@ -1220,7 +1289,6 @@ hreffify (NSText *nstext)
   [self placeChild:lab on:parent];
   UISwitch *button = [[UISwitch alloc] initWithFrame:rect];
   [self placeChild:button on:parent right:YES];
-  [lab release];
 
 # endif // USE_IPHONE
   
@@ -1256,6 +1324,8 @@ hreffify (NSText *nstext)
   NSString *high       = [dict objectForKey:@"high"];
   NSString *def        = [dict objectForKey:@"default"];
   NSString *cvt        = [dict objectForKey:@"convert"];
+  [dict release];
+  dict = 0;
   
   NSAssert1 (arg,  @"no arg in %@", label);
   NSAssert1 (type, @"no type in %@", label);
@@ -1309,6 +1379,7 @@ hreffify (NSText *nstext)
     while (range2 > max_ticks)
       range2 /= 10;
 
+# ifndef USE_IPHONE
     // If we have elided ticks, leave it at the max number of ticks.
     if (range != range2 && range2 < max_ticks)
       range2 = max_ticks;
@@ -1317,7 +1388,6 @@ hreffify (NSText *nstext)
     if (float_p && range2 < max_ticks)
       range2 = max_ticks;
 
-# ifndef USE_IPHONE
     [slider setNumberOfTickMarks:range2];
 
     [slider setAllowsTickMarkValuesOnly:
@@ -1340,7 +1410,6 @@ hreffify (NSText *nstext)
         [lab setFont:[NSFont boldSystemFontOfSize:s]];
       }
 # endif
-      [lab release];
     }
     
     if (low_label) {
@@ -1360,8 +1429,6 @@ hreffify (NSText *nstext)
       [lab setLineBreakMode:NSLineBreakByClipping];
       [self placeChild:lab on:parent right:(label ? YES : NO)];
 # endif // USE_IPHONE
-
-      [lab release];
      }
     
 # ifndef USE_IPHONE
@@ -1397,7 +1464,6 @@ hreffify (NSText *nstext)
       [lab setLineBreakMode:NSLineBreakByClipping];
 # endif
       [self placeChild:lab on:parent right:YES];
-      [lab release];
      }
 
     [self bindSwitch:slider cmdline:arg];
@@ -1437,7 +1503,6 @@ hreffify (NSText *nstext)
       rect.size.height = [txt frame].size.height;
       [lab setFrame:rect];
       [self placeChild:lab on:parent];
-      [lab release];
      }
     
     [self placeChild:txt on:parent right:(label ? YES : NO)];
@@ -1538,6 +1603,8 @@ set_menu_item_object (NSMenuItem *item, NSObject *obj)
   //
   NSMutableDictionary *dict = [@{ @"id": @"", } mutableCopy];
   [self parseAttrs:dict node:node];
+  [dict release];
+  dict = 0;
   
   NSRect rect;
   rect.origin.x = rect.origin.y = 0;
@@ -1590,6 +1657,8 @@ set_menu_item_object (NSMenuItem *item, NSObject *obj)
     [self parseAttrs:dict2 node:child];
     NSString *label   = [dict2 objectForKey:@"_label"];
     NSString *arg_set = [dict2 objectForKey:@"arg-set"];
+    [dict2 release];
+    dict2 = 0;
     
     if (!label) {
       NSAssert1 (0, @"no _label in %@", [child name]);
@@ -1729,6 +1798,7 @@ set_menu_item_object (NSMenuItem *item, NSObject *obj)
     [b setLineBreakMode:NSLineBreakByTruncatingHead];
     [b setFont:[NSFont boldSystemFontOfSize: FONT_SIZE]];
     [self placeChild:b on:parent];
+    [b release];
     i++;
   }
 
@@ -1766,6 +1836,7 @@ set_menu_item_object (NSMenuItem *item, NSObject *obj)
   rect.size.height = 50;  // sized later
 # ifndef USE_IPHONE
   NSText *lab = [[NSText alloc] initWithFrame:rect];
+  [lab autorelease];
   [lab setEditable:NO];
   [lab setDrawsBackground:NO];
   [lab setHorizontallyResizable:YES];
@@ -1787,6 +1858,7 @@ set_menu_item_object (NSMenuItem *item, NSObject *obj)
   HTMLLabel *lab = [[HTMLLabel alloc] 
                      initWithText:text
                      font:[NSFont systemFontOfSize: [NSFont systemFontSize]]];
+  [lab autorelease];
   [lab setFrame:rect];
   [lab sizeToFit];
 #  endif // USE_HTML_LABELS
@@ -1796,7 +1868,6 @@ set_menu_item_object (NSMenuItem *item, NSObject *obj)
 # endif // USE_IPHONE
 
   [self placeChild:lab on:parent];
-  [lab release];
 }
 
 
@@ -1814,6 +1885,8 @@ set_menu_item_object (NSMenuItem *item, NSObject *obj)
   [self parseAttrs:dict node:node];
   NSString *label = [dict objectForKey:@"_label"];
   NSString *arg   = [dict objectForKey:@"arg"];
+  [dict release];
+  dict = 0;
 
   if (!label && label_p) {
     NSAssert1 (0, @"no _label in %@", [node name]);
@@ -1864,7 +1937,6 @@ set_menu_item_object (NSMenuItem *item, NSObject *obj)
   if (label) {
     LABEL *lab = [self makeLabel:label];
     [self placeChild:lab on:parent];
-    [lab release];
   }
 
   [self placeChild:txt on:parent right:(label ? YES : NO)];
@@ -1891,6 +1963,8 @@ set_menu_item_object (NSMenuItem *item, NSObject *obj)
   [self parseAttrs:dict node:node];
   NSString *label = [dict objectForKey:@"_label"];
   NSString *arg   = [dict objectForKey:@"arg"];
+  [dict release];
+  dict = 0;
 
   if (!label && label_p) {
     NSAssert1 (0, @"no _label in %@", [node name]);
@@ -1922,7 +1996,6 @@ set_menu_item_object (NSMenuItem *item, NSObject *obj)
   if (label) {
     lab = [self makeLabel:label];
     [self placeChild:lab on:parent];
-    [lab release];
   }
 
   [self placeChild:txt on:parent right:(label ? YES : NO)];
@@ -1980,21 +2053,10 @@ do_file_selector (NSTextField *txt, BOOL dirs_p)
   [panel setCanChooseFiles:!dirs_p];
   [panel setCanChooseDirectories:dirs_p];
 
-  NSString *file = [txt stringValue];
-  if ([file length] <= 0) {
-    file = NSHomeDirectory();
-    if (dirs_p)
-      file = [file stringByAppendingPathComponent:@"Pictures"];
-  }
-
-//  NSString *dir = [file stringByDeletingLastPathComponent];
-
-  int result = [panel runModalForDirectory:file //dir
-                                      file:nil //[file lastPathComponent]
-                                     types:nil];
+  int result = [panel runModal];
   if (result == NSOKButton) {
-    NSArray *files = [panel filenames];
-    file = ([files count] > 0 ? [files objectAtIndex:0] : @"");
+    NSArray *files = [panel URLs];
+    NSString *file = ([files count] > 0 ? [[files objectAtIndex:0] path] : @"");
     file = [file stringByAbbreviatingWithTildeInPath];
     [txt setStringValue:file];
 
@@ -2007,22 +2069,6 @@ do_file_selector (NSTextField *txt, BOOL dirs_p)
     if ([path hasPrefix:@"values."])  // WTF.
       path = [path substringFromIndex:7];
     [[prefs values] setValue:file forKey:path];
-
-#if 0
-    // make sure the end of the string is visible.
-    NSText *fe = [[txt window] fieldEditor:YES forObject:txt];
-    NSRange range;
-    range.location = [file length]-3;
-    range.length = 1;
-    if (! [[txt window] makeFirstResponder:[txt window]])
-      [[txt window] endEditingFor:nil];
-//    [[txt window] makeFirstResponder:nil];
-    [fe setSelectedRange:range];
-//    [tv scrollRangeToVisible:range];
-//    [txt setNeedsDisplay:YES];
-//    [[txt cell] setNeedsDisplay:YES];
-//    [txt selectAll:txt];
-#endif
   }
 }
 
@@ -2126,6 +2172,9 @@ find_text_field_of_button (NSButton *button)
 
   [self placeChild:matrix on:group];
   [self placeChild:rgroup on:group right:YES];
+  [proto release];
+  [matrix release];
+  [rgroup release];
 
   NSXMLNode *node2;
 
@@ -2149,7 +2198,7 @@ find_text_field_of_button (NSButton *button)
               @"arg-set": @"-text-mode date",
               @"_label":  @"Display the date and time" }];
   [node3 setParent: node2];
-  //[node3 release];
+  [node3 autorelease];
 
   node3 = [[NSXMLElement alloc] initWithName:@"option"];
   [node3 setAttributesAsDictionary:
@@ -2157,16 +2206,17 @@ find_text_field_of_button (NSButton *button)
               @"arg-set": @"-text-mode literal",
               @"_label":  @"Display static text" }];
   [node3 setParent: node2];
-  //[node3 release];
+  [node3 autorelease];
 
   node3 = [[NSXMLElement alloc] initWithName:@"option"];
   [node3 setAttributesAsDictionary:
            @{ @"id":     @"url",                           
               @"_label": @"Display the contents of a URL" }];
   [node3 setParent: node2];
-  //[node3 release];
+  [node3 autorelease];
 
   [self makeOptionMenu:node2 on:rgroup];
+  [node2 release];
 
 # endif // USE_IPHONE
 
@@ -2187,6 +2237,7 @@ find_text_field_of_button (NSButton *button)
         withLabel:YES
 # endif
         horizontal:NO];
+  [node2 release];
 
 //  rect = [last_child(rgroup) frame];
 
@@ -2207,6 +2258,7 @@ find_text_field_of_button (NSButton *button)
               @"arg": @"-text-file %" }];
   [self makeFileSelector:node2 on:rgroup
         dirsOnly:NO withLabel:NO editable:NO];
+  [node2 release];
 # endif // !USE_IPHONE
 
 //  rect = [last_child(rgroup) frame];
@@ -2227,6 +2279,7 @@ find_text_field_of_button (NSButton *button)
         withLabel:YES
 # endif
         horizontal:NO];
+  [node2 release];
 
 //  rect = [last_child(rgroup) frame];
 
@@ -2239,6 +2292,7 @@ find_text_field_of_button (NSButton *button)
                  @"arg": @"-text-program %",
               }];
     [self makeTextField:node2 on:rgroup withLabel:NO horizontal:NO];
+    [node2 release];
   }
 
 //  rect = [last_child(rgroup) frame];
@@ -2294,6 +2348,8 @@ find_text_field_of_button (NSButton *button)
   [box sizeToFit];
 
   [self placeChild:box on:parent];
+  [group release];
+  [box release];
 
 # endif // !USE_IPHONE
 }
@@ -2330,6 +2386,7 @@ find_text_field_of_button (NSButton *button)
               @"arg-unset": @"-no-grab-desktop",
             }];
   [self makeCheckbox:node2 on:parent];
+  [node2 release];
 
   node2 = [[NSXMLElement alloc] initWithName:@"boolean"];
   [node2 setAttributesAsDictionary:
@@ -2338,6 +2395,7 @@ find_text_field_of_button (NSButton *button)
               @"arg-set": @"-choose-random-images",
             }];
   [self makeCheckbox:node2 on:parent];
+  [node2 release];
 
   node2 = [[NSXMLElement alloc] initWithName:@"string"];
   [node2 setAttributesAsDictionary:
@@ -2347,6 +2405,7 @@ find_text_field_of_button (NSButton *button)
             }];
   [self makeFileSelector:node2 on:parent
         dirsOnly:YES withLabel:YES editable:YES];
+  [node2 release];
 
 # undef SCREENS
 # undef PHOTOS
@@ -2363,7 +2422,6 @@ find_text_field_of_button (NSButton *button)
   r2.origin.x += 20;
   r2.origin.y += 14;
   [lab2 setFrameOrigin:r2.origin];
-  [lab2 release];
 # endif // USE_IPHONE
 }
 
@@ -2405,6 +2463,7 @@ find_text_field_of_button (NSButton *button)
               @"arg-unset": @"-no-" SUSUEnableAutomaticChecksKey,
             }];
   [self makeCheckbox:node2 on:group];
+  [node2 release];
 
   // <select ...>
 
@@ -2420,7 +2479,7 @@ find_text_field_of_button (NSButton *button)
               @"arg-set": @"-" SUScheduledCheckIntervalKey " 3600",
               @"_label":  @"Hourly" }];
   [node3 setParent: node2];
-  //[node3 release];
+  [node3 autorelease];
 
   node3 = [[NSXMLElement alloc] initWithName:@"option"];
   [node3 setAttributesAsDictionary:
@@ -2428,7 +2487,7 @@ find_text_field_of_button (NSButton *button)
               @"arg-set": @"-" SUScheduledCheckIntervalKey " 86400",
               @"_label":  @"Daily" }];
   [node3 setParent: node2];
-  //[node3 release];
+  [node3 autorelease];
 
   node3 = [[NSXMLElement alloc] initWithName:@"option"];
   [node3 setAttributesAsDictionary:
@@ -2437,7 +2496,7 @@ find_text_field_of_button (NSButton *button)
               @"_label": @"Weekly",
             }];
   [node3 setParent: node2];
-  //[node3 release];
+  [node3 autorelease];
 
   node3 = [[NSXMLElement alloc] initWithName:@"option"];
   [node3 setAttributesAsDictionary:
@@ -2446,10 +2505,11 @@ find_text_field_of_button (NSButton *button)
               @"_label":  @"Monthly",
              }];
   [node3 setParent: node2];
-  //[node3 release];
+  [node3 autorelease];
 
   // </option>
   [self makeOptionMenu:node2 on:group];
+  [node2 release];
 
   // </hgroup>
   layout_group (group, TRUE);
@@ -2618,6 +2678,8 @@ last_child (NSView *parent)
   [box sizeToFit];
 
   [self placeChild:box on:parent];
+  [group release];
+  [box release];
 # endif // !USE_IPHONE
 }
 
@@ -3073,6 +3135,7 @@ wrap_with_buttons (NSWindow *window, NSView *panel)
         attributes:(NSDictionary *)attrs
 {
   NSXMLElement *e = [[NSXMLElement alloc] initWithName:elt];
+  [e autorelease];
   [e setKind:SimpleXMLElementKind];
   [e setAttributesAsDictionary:attrs];
   NSXMLElement *p = xml_parsing;
@@ -3106,6 +3169,7 @@ wrap_with_buttons (NSWindow *window, NSView *panel)
   NSXMLElement *p = xml_parsing;
   [e setParent:p];
   [e setObjectValue: string];
+  [e autorelease];
 }
 
 
@@ -3417,6 +3481,7 @@ wrap_with_buttons (NSWindow *window, NSView *panel)
         [label setFrame:r];
         [label setFont:[NSFont boldSystemFontOfSize: FONT_SIZE]];
         [box addSubview: label];
+        [box autorelease];
 
         ctl = box;
       }
@@ -3503,6 +3568,7 @@ wrap_with_buttons (NSWindow *window, NSView *panel)
         [box addSubview: left];
         [box addSubview: right];
         [box addSubview: mid];
+        [box autorelease];
 
         ctl = box;
       }
@@ -3587,6 +3653,13 @@ wrap_with_buttons (NSWindow *window, NSView *panel)
                err);
     return nil;
   }
+
+# ifndef USE_IPHONE
+  TextModeTransformer *t = [[TextModeTransformer alloc] init];
+  [NSValueTransformer setValueTransformer:t
+                      forName:@"TextModeTransformer"];
+  [t release];
+# endif // USE_IPHONE
 
   [self traverseTree];
   xml_root = 0;

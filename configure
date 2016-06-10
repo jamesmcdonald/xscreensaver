@@ -706,11 +706,11 @@ PO_IN_DATADIR_TRUE
 INTLLIBS
 INSTOBJEXT
 GMOFILES
+DATADIRNAME
 CATOBJEXT
 CATALOGS
 MSGFMT_OPTS
 GETTEXT_PACKAGE
-DATADIRNAME
 ALL_LINGUAS
 GMSGFMT
 MSGFMT
@@ -2630,7 +2630,7 @@ echo "command line was: $0 $@"
 # check for some random other files that come later in the tar file,
 # to make sure everything is here.
 #
-for d in driver utils hacks hacks/glx ; do
+for d in utils jwxyz hacks hacks/glx driver ; do
   f=$srcdir/$d/Makefile.in
   if test \! -r $f ; then
     echo ""
@@ -5264,12 +5264,13 @@ fi
 done
 
 
-for ac_header in unistd.h
+for ac_header in unistd.h inttypes.h
 do :
-  ac_fn_c_check_header_mongrel "$LINENO" "unistd.h" "ac_cv_header_unistd_h" "$ac_includes_default"
-if test "x$ac_cv_header_unistd_h" = xyes; then :
+  as_ac_Header=`$as_echo "ac_cv_header_$ac_header" | $as_tr_sh`
+ac_fn_c_check_header_mongrel "$LINENO" "$ac_header" "$as_ac_Header" "$ac_includes_default"
+if eval test \"x\$"$as_ac_Header"\" = x"yes"; then :
   cat >>confdefs.h <<_ACEOF
-#define HAVE_UNISTD_H 1
+#define `$as_echo "HAVE_$ac_header" | $as_tr_cpp` 1
 _ACEOF
 
 fi
@@ -6829,6 +6830,9 @@ else
   # Look for the directory under a standard set of common directories.
   # Check X11 before X11Rn because it's often a symlink to the current release.
   for ac_dir in                                 \
+                                                \
+    /usr/share/X11/app-defaults                 \
+                                                \
     /usr/X11/lib/app-defaults                   \
     /usr/X11R6/lib/app-defaults                 \
     /usr/X11R6/lib/X11/app-defaults             \
@@ -7594,44 +7598,6 @@ if test -z "$xgversion" -o -z "$mmversion" -o -z "$mfversion"; then
 fi
 
 # Substitute ALL_LINGUAS so we can use it in po/Makefile
-
-
-# Set DATADIRNAME correctly if it is not set yet
-# (copied from glib-gettext.m4)
-if test -z "$DATADIRNAME"; then
-  cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-
-int
-main ()
-{
-extern int _nl_msg_cat_cntr;
-                       return _nl_msg_cat_cntr
-  ;
-  return 0;
-}
-_ACEOF
-if ac_fn_c_try_link "$LINENO"; then :
-  DATADIRNAME=share
-else
-  case $host in
-    *-*-solaris*)
-                        ac_fn_c_check_func "$LINENO" "bind_textdomain_codeset" "ac_cv_func_bind_textdomain_codeset"
-if test "x$ac_cv_func_bind_textdomain_codeset" = xyes; then :
-  DATADIRNAME=share
-else
-  DATADIRNAME=lib
-fi
-
-    ;;
-    *)
-    DATADIRNAME=lib
-    ;;
-    esac
-fi
-rm -f core conftest.err conftest.$ac_objext \
-    conftest$ac_exeext conftest.$ac_ext
-fi
 
 
 
@@ -11771,6 +11737,8 @@ esac
 with_login_manager_req=unspecified
 default_login_manager_1='gdmflexiserver -ls'
 default_login_manager_2='kdmctl reserve'
+default_login_manager_3='lxdm -c USER_SWITCH'
+default_login_manager_4='dm-tool switch-to-greeter'
 
 
 # Check whether --with-login-manager was given.
@@ -11793,11 +11761,14 @@ case "$with_login_manager_req" in
   ;;
 
   yes|unspecified)
-    # Try both defaults, use the one that exists.
+    # Try various defaults, use the first one that exists.
 
-    set dummy $default_login_manager_1 ; login_manager_tmp=$2
-    unset ac_cv_path_login_manager_tmp  # don't cache
-    # Extract the first word of "$login_manager_tmp", so it can be a program name with args.
+    with_login_manager=""
+
+    if test -z "$with_login_manager" ; then
+      set dummy $default_login_manager_1 ; login_manager_tmp=$2
+      unset ac_cv_path_login_manager_tmp  # don't cache
+      # Extract the first word of "$login_manager_tmp", so it can be a program name with args.
 set dummy $login_manager_tmp; ac_word=$2
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking for $ac_word" >&5
 $as_echo_n "checking for $ac_word... " >&6; }
@@ -11837,9 +11808,12 @@ $as_echo "no" >&6; }
 fi
 
 
-    if test ! -z "$login_manager_tmp" ; then
-      with_login_manager="$default_login_manager_1"
-    else
+      if test ! -z "$login_manager_tmp" ; then
+        with_login_manager="$default_login_manager_1"
+      fi
+    fi
+
+    if test -z "$with_login_manager" ; then
       set dummy $default_login_manager_2 ; login_manager_tmp=$2
       unset ac_cv_path_login_manager_tmp  # don't cache
       # Extract the first word of "$login_manager_tmp", so it can be a program name with args.
@@ -11884,10 +11858,105 @@ fi
 
       if test ! -z "$login_manager_tmp" ; then
         with_login_manager="$default_login_manager_2"
-      else
-        with_login_manager=""
       fi
     fi
+
+    if test -z "$with_login_manager" ; then
+      set dummy $default_login_manager_3 ; login_manager_tmp=$2
+      unset ac_cv_path_login_manager_tmp  # don't cache
+      # Extract the first word of "$login_manager_tmp", so it can be a program name with args.
+set dummy $login_manager_tmp; ac_word=$2
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for $ac_word" >&5
+$as_echo_n "checking for $ac_word... " >&6; }
+if ${ac_cv_path_login_manager_tmp+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  case $login_manager_tmp in
+  [\\/]* | ?:[\\/]*)
+  ac_cv_path_login_manager_tmp="$login_manager_tmp" # Let the user override the test with a path.
+  ;;
+  *)
+  as_save_IFS=$IFS; IFS=$PATH_SEPARATOR
+for as_dir in $PATH
+do
+  IFS=$as_save_IFS
+  test -z "$as_dir" && as_dir=.
+    for ac_exec_ext in '' $ac_executable_extensions; do
+  if as_fn_executable_p "$as_dir/$ac_word$ac_exec_ext"; then
+    ac_cv_path_login_manager_tmp="$as_dir/$ac_word$ac_exec_ext"
+    $as_echo "$as_me:${as_lineno-$LINENO}: found $as_dir/$ac_word$ac_exec_ext" >&5
+    break 2
+  fi
+done
+  done
+IFS=$as_save_IFS
+
+  ;;
+esac
+fi
+login_manager_tmp=$ac_cv_path_login_manager_tmp
+if test -n "$login_manager_tmp"; then
+  { $as_echo "$as_me:${as_lineno-$LINENO}: result: $login_manager_tmp" >&5
+$as_echo "$login_manager_tmp" >&6; }
+else
+  { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+fi
+
+
+      if test ! -z "$login_manager_tmp" ; then
+        with_login_manager="$default_login_manager_3"
+      fi
+    fi
+
+    if test -z "$with_login_manager" ; then
+      set dummy $default_login_manager_4 ; login_manager_tmp=$2
+      unset ac_cv_path_login_manager_tmp  # don't cache
+      # Extract the first word of "$login_manager_tmp", so it can be a program name with args.
+set dummy $login_manager_tmp; ac_word=$2
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for $ac_word" >&5
+$as_echo_n "checking for $ac_word... " >&6; }
+if ${ac_cv_path_login_manager_tmp+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  case $login_manager_tmp in
+  [\\/]* | ?:[\\/]*)
+  ac_cv_path_login_manager_tmp="$login_manager_tmp" # Let the user override the test with a path.
+  ;;
+  *)
+  as_save_IFS=$IFS; IFS=$PATH_SEPARATOR
+for as_dir in $PATH
+do
+  IFS=$as_save_IFS
+  test -z "$as_dir" && as_dir=.
+    for ac_exec_ext in '' $ac_executable_extensions; do
+  if as_fn_executable_p "$as_dir/$ac_word$ac_exec_ext"; then
+    ac_cv_path_login_manager_tmp="$as_dir/$ac_word$ac_exec_ext"
+    $as_echo "$as_me:${as_lineno-$LINENO}: found $as_dir/$ac_word$ac_exec_ext" >&5
+    break 2
+  fi
+done
+  done
+IFS=$as_save_IFS
+
+  ;;
+esac
+fi
+login_manager_tmp=$ac_cv_path_login_manager_tmp
+if test -n "$login_manager_tmp"; then
+  { $as_echo "$as_me:${as_lineno-$LINENO}: result: $login_manager_tmp" >&5
+$as_echo "$login_manager_tmp" >&6; }
+else
+  { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+fi
+
+
+      if test ! -z "$login_manager_tmp" ; then
+        with_login_manager="$default_login_manager_4"
+      fi
+    fi
+
   ;;
 
   /*)
@@ -13203,7 +13272,7 @@ if ${ac_cv_mesagl_version_string+:} false; then :
   $as_echo_n "(cached) " >&6
 else
   cat > conftest.$ac_ext <<EOF
-#line 13210 "configure"
+#line 13279 "configure"
 #include "confdefs.h"
 #include <GL/gl.h>
 #ifndef MESA_MAJOR_VERSION
@@ -13783,7 +13852,7 @@ if test "$with_gles" = yes; then
   have_gles=yes
   $as_echo "#define HAVE_JWZGLES 1" >>confdefs.h
 
-  JWZGLES_OBJS="jwzgles.o"
+  JWZGLES_OBJS='$(JWXYZ_BIN)/jwzgles.o'
   { $as_echo "$as_me:${as_lineno-$LINENO}: result: using OpenGL ES compatiblity shim" >&5
 $as_echo "using OpenGL ES compatiblity shim" >&6; }
 elif test "$with_gles" != no; then
@@ -14756,7 +14825,7 @@ fi
 ###############################################################################
 
 PTY_LIBS=
-for ac_header in pty.h util.h
+for ac_header in pty.h util.h sys/termios.h
 do :
   as_ac_Header=`$as_echo "ac_cv_header_$ac_header" | $as_tr_sh`
 ac_fn_c_check_header_mongrel "$LINENO" "$ac_header" "$as_ac_Header" "$ac_includes_default"
@@ -15904,7 +15973,7 @@ APPDEFAULTS=$ac_x_app_defaults
 
 
 
-ac_config_files="$ac_config_files Makefile utils/Makefile driver/Makefile driver/xscreensaver.pam driver/xscreensaver-demo.glade2 hacks/Makefile hacks/glx/Makefile po/Makefile.in driver/XScreenSaver.ad"
+ac_config_files="$ac_config_files Makefile utils/Makefile jwxyz/Makefile hacks/Makefile hacks/glx/Makefile po/Makefile.in driver/Makefile driver/xscreensaver.pam driver/xscreensaver-demo.glade2 driver/XScreenSaver.ad"
 
 cat >confcache <<\_ACEOF
 # This file is a shell script that caches the results of configure
@@ -16613,12 +16682,13 @@ do
     "default-1") CONFIG_COMMANDS="$CONFIG_COMMANDS default-1" ;;
     "Makefile") CONFIG_FILES="$CONFIG_FILES Makefile" ;;
     "utils/Makefile") CONFIG_FILES="$CONFIG_FILES utils/Makefile" ;;
-    "driver/Makefile") CONFIG_FILES="$CONFIG_FILES driver/Makefile" ;;
-    "driver/xscreensaver.pam") CONFIG_FILES="$CONFIG_FILES driver/xscreensaver.pam" ;;
-    "driver/xscreensaver-demo.glade2") CONFIG_FILES="$CONFIG_FILES driver/xscreensaver-demo.glade2" ;;
+    "jwxyz/Makefile") CONFIG_FILES="$CONFIG_FILES jwxyz/Makefile" ;;
     "hacks/Makefile") CONFIG_FILES="$CONFIG_FILES hacks/Makefile" ;;
     "hacks/glx/Makefile") CONFIG_FILES="$CONFIG_FILES hacks/glx/Makefile" ;;
     "po/Makefile.in") CONFIG_FILES="$CONFIG_FILES po/Makefile.in" ;;
+    "driver/Makefile") CONFIG_FILES="$CONFIG_FILES driver/Makefile" ;;
+    "driver/xscreensaver.pam") CONFIG_FILES="$CONFIG_FILES driver/xscreensaver.pam" ;;
+    "driver/xscreensaver-demo.glade2") CONFIG_FILES="$CONFIG_FILES driver/xscreensaver-demo.glade2" ;;
     "driver/XScreenSaver.ad") CONFIG_FILES="$CONFIG_FILES driver/XScreenSaver.ad" ;;
     "po/stamp-it") CONFIG_COMMANDS="$CONFIG_COMMANDS po/stamp-it" ;;
 

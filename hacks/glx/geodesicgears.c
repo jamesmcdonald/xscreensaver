@@ -1,4 +1,4 @@
-/* geodesicgears, Copyright (c) 2014 Jamie Zawinski <jwz@jwz.org>
+/* geodesicgears, Copyright (c) 2014-2015 Jamie Zawinski <jwz@jwz.org>
  *
  * Permission to use, copy, modify, distribute, and sell this software and its
  * documentation for any purpose is hereby granted without fee, provided that
@@ -17,6 +17,7 @@
 			"*wireframe:    False       \n" \
 			"*showFPS:      False       \n" \
 		        "*texFontCacheSize: 100     \n" \
+			"*suppressRotationAnimation: True\n" \
 		"*font:  -*-helvetica-medium-r-normal-*-*-160-*-*-*-*-*-*\n" \
 
 # define refresh_geodesic 0
@@ -1328,6 +1329,14 @@ reshape_geodesic (ModeInfo *mi, int width, int height)
              0.0, 0.0, 0.0,
              0.0, 1.0, 0.0);
 
+# ifdef HAVE_MOBILE	/* Keep it the same relative size when rotated. */
+  {
+    int o = (int) current_device_rotation();
+    if (o != 0 && o != 180 && o != -180)
+      glScalef (1/h, 1/h, 1/h);
+  }
+# endif
+
   glClear(GL_COLOR_BUFFER_BIT);
 }
 
@@ -1700,6 +1709,7 @@ draw_geodesic (ModeInfo *mi)
 
           int w, h, j;
           char buf[100];
+          XCharStruct e;
 
           /* If an even number of teeth, offset by 1/2 tooth width. */
           if (s->direction > 0 /* && !(g->nteeth & 1) */)
@@ -1721,8 +1731,10 @@ draw_geodesic (ModeInfo *mi)
           glPushMatrix();
           glScalef(0.005, 0.005, 0.005);
           sprintf (buf, "%d", i);
-          w = texture_string_width (bp->font, buf, &h);
-          glTranslatef (-w/2, -h*2/3, 0);
+          texture_string_metrics (bp->font, buf, &e, 0, 0);
+          w = e.width;
+          h = e.ascent + e.descent;
+          glTranslatef (-w/2, -h/2, 0);
           print_texture_string (bp->font, buf);
           glPopMatrix();
 
@@ -1738,8 +1750,10 @@ draw_geodesic (ModeInfo *mi)
               glTranslatef (r * cos(th), r * sin(th), -g->z + 0.01);
               glScalef(ss, ss, ss);
               sprintf (buf, "%d", j + 1);
-              w = texture_string_width (bp->font, buf, &h);
-              glTranslatef (-w/2, -h*2/3, 0);
+              texture_string_metrics (bp->font, buf, &e, 0, 0);
+              w = e.width;
+              h = e.ascent + e.descent;
+              glTranslatef (-w/2, -h/2, 0);
               print_texture_string (bp->font, buf);
               glPopMatrix();
             }

@@ -28,7 +28,7 @@
 - (void) titleTapped:(id) sender
 {
   [[UIApplication sharedApplication]
-    openURL:[NSURL URLWithString:@"http://www.jwz.org/xscreensaver/"]];
+    openURL:[NSURL URLWithString:@"https://www.jwz.org/xscreensaver/"]];
 }
 
 
@@ -65,8 +65,9 @@
   [button addTarget:self
           action:@selector(titleTapped:)
           forControlEvents:UIControlEventTouchUpInside];
-  self.navigationItem.rightBarButtonItem = 
-    [[UIBarButtonItem alloc] initWithCustomView: button];
+  UIBarButtonItem *bi = [[UIBarButtonItem alloc] initWithCustomView: button];
+  self.navigationItem.rightBarButtonItem = bi;
+  [bi release];
   [button release];
 
   // The title bar
@@ -88,7 +89,7 @@
   CGRect r3 = r2;
 
   CGRect win = [self view].frame;
-  if (win.size.width > 320) {					// iPad
+  if (win.size.width > 414 && win.size.height > 414) {		// iPad
     [label1 setTextAlignment: NSTextAlignmentLeft];
     [label2 setTextAlignment: NSTextAlignmentRight];
     label2.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
@@ -99,7 +100,7 @@
     r2 = r1;
 
   } else {							// iPhone
-    r3.size.width = 320; // force it to be flush-left
+    r3.size.width = win.size.width; // force it to be flush-left
     [label1 setTextAlignment: NSTextAlignmentLeft];
     [label2 setTextAlignment: NSTextAlignmentLeft];
     r1.origin.y = -1;    // make it fit in landscape

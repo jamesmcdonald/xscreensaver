@@ -13,11 +13,6 @@ software for any purpose.  It is provided "as is" without express or
 implied warranty.
 */
 
-#include "thread_util.h"
-
-#include "aligned_malloc.h"
-#include "resources.h"
-
 #if HAVE_CONFIG_H
 #	include "config.h"
 #endif
@@ -39,8 +34,13 @@ implied warranty.
 
 #if defined __MACH__ && defined __APPLE__ /* OS X, iOS */
 #	include <sys/sysctl.h>
-#	include <stdint.h>
+#	include <inttypes.h>
 #endif
+
+#include "thread_util.h"
+
+#include "aligned_malloc.h"
+#include "resources.h"
 
 #define IS_POWER_OF_2(x) ((x) > 0 && !((x) & ((x) - 1)))
 
@@ -694,18 +694,16 @@ static void _unlock_and_destroy(struct threadpool *self)
 
 	PTHREAD_VERIFY(pthread_mutex_unlock(&self->mutex));
 
-	if(!threads)
-		return;
-
+	if(threads)
 	{
 		unsigned i, count = _threadpool_count_parallel(self);
 		for(i = 0; i != count; ++i)
 			PTHREAD_VERIFY(pthread_join(threads[i], NULL));
-	}
 
-	free(threads);
-	PTHREAD_VERIFY(pthread_cond_destroy(&self->cond));
-	PTHREAD_VERIFY(pthread_mutex_destroy(&self->mutex));
+		free(threads);
+		PTHREAD_VERIFY(pthread_cond_destroy(&self->cond));
+		PTHREAD_VERIFY(pthread_mutex_destroy(&self->mutex));
+	}
 
 	_serial_destroy(self);
 }

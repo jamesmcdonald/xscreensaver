@@ -4,7 +4,7 @@
 
   <command arg="-root"/>
 
-  <video href="http://www.youtube.com/watch?v=wcdKHCp9foY"/>
+  <video href="https://www.youtube.com/watch?v=wcdKHCp9foY"/>
 
  <!-- #### -color [random] -->
 
@@ -46,7 +46,7 @@
   <_description>
 2D meta-balls: overlapping and merging balls with fuzzy edges.
 
-http://en.wikipedia.org/wiki/Metaballs
+https://en.wikipedia.org/wiki/Metaballs
 
 Written by W.P. van Paassen; 2003.
   </_description>

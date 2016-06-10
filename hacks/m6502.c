@@ -12,7 +12,7 @@
  * Created: 07-May-2007 
  */
 
-#include <stdint.h> 
+#include <inttypes.h>
 #include <string.h>
 #include "screenhack.h"
 #include "analogtv.h"
@@ -28,7 +28,7 @@ static const char * const demo_files[] = {
 };
 
 
-#ifndef USE_IPHONE
+#ifndef HAVE_MOBILE
 # define READ_FILES
 #endif
 
@@ -244,7 +244,7 @@ m6502_draw (Display *dpy, Window window, void *closure)
     start_rand_bin_prog(st->machine,st);
   }
 
-#ifdef USE_IPHONE
+#ifdef HAVE_MOBILE
   return 0;
 #else
   return 5000;

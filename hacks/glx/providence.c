@@ -274,7 +274,7 @@ static void update_particles(providencestruct *mp)
     int x = mp->eyeparticles[i][1] + random()%(cos(mp->theta) < 0.0 ? 8 : 16);
 
     /* reset if dead */
-    if(x > EYELENGTH || random()%(cos(mp->theta) < 0.0 ? 40 : 10) == 0) {
+    if(x >= EYELENGTH || random()%(cos(mp->theta) < 0.0 ? 40 : 10) == 0) {
 
 /*     if(x > EYELENGTH || (x > EYELENGTH/(2/3.0) && random()%7 == 0)) { */
       mp->eyeparticles[i][0] = random()%LOOKUPSIZE;
@@ -766,6 +766,15 @@ ENTRYPOINT void draw_providence(ModeInfo * mi)
   glRotatef(10.0+20.0*sin(mp->theta/2.0), 1.0, 0.0, 0.0);
   gltrackball_rotate(mp->trackball);
   glRotatef(mp->theta * 180.0 / Pi, 0.0, -1.0, 0.0);
+
+# ifdef HAVE_MOBILE	/* Keep it the same relative size when rotated. */
+  {
+    GLfloat h = MI_HEIGHT(mi) / (GLfloat) MI_WIDTH(mi);
+    int o = (int) current_device_rotation();
+    if (o != 0 && o != 180 && o != -180)
+      glScalef (1/h, 1/h, 1/h);
+  }
+# endif
 
   /* draw providence */
   draw_providence_strip(mi);

@@ -15,6 +15,10 @@
 #include "thread_util.h"
 #include "xshm.h"
 
+#if defined(USE_IPHONE) || defined(HAVE_ANDROID)
+# define HAVE_MOBILE
+#endif
+
 /*
   You'll need these to generate standard NTSC TV signals
  */
@@ -207,6 +211,8 @@ typedef struct analogtv_s {
   int cmap_i_levels;
   int cmap_q_levels;
 
+  float tint_i, tint_q;
+  
   int cur_hsync;
   int line_hsync[ANALOGTV_V];
   int cur_vsync;
@@ -292,7 +298,7 @@ int analogtv_handle_events (analogtv *it);
 #define ANALOGTV_DEFAULTS_SHM
 #endif
 
-#ifndef USE_IPHONE
+#ifndef HAVE_MOBILE
 # define ANALOGTV_DEF_BRIGHTNESS "2"
 # define ANALOGTV_DEF_CONTRAST "150"
 #else
